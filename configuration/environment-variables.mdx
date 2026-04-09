@@ -1,0 +1,108 @@
+---
+title: "Environment variables"
+description: "Configure fake-gcs-server using environment variables instead of command-line flags."
+---
+
+Every server flag has a corresponding environment variable. Variable names are prefixed with `FAKE_GCS_` and use uppercase with underscores in place of hyphens.
+
+## Precedence
+
+<Note>
+  Command-line flags take priority over environment variables. If you pass `-port 9000` and also set `FAKE_GCS_PORT=4443`, the server starts on port 9000.
+</Note>
+
+If a variable is set to an invalid value (for example, a non-numeric string for a port), the server exits with an error before binding.
+
+## Reference
+
+| Environment variable | Corresponding flag | Default | Description |
+|---|---|---|---|
+| `FAKE_GCS_PORT` | `-port` | `4443` | Port for HTTPS (or HTTP when scheme is `http`). |
+| `FAKE_GCS_PORT_HTTP` | `-port-http` | `8000` | HTTP port; only used when scheme is `both`. |
+| `FAKE_GCS_SCHEME` | `-scheme` | `https` | Protocol: `http`, `https`, or `both`. |
+| `FAKE_GCS_HOST` | `-host` | `0.0.0.0` | Host address to bind to. |
+| `FAKE_GCS_BACKEND` | `-backend` | `filesystem` | Storage backend: `memory` or `filesystem`. |
+| `FAKE_GCS_FILESYSTEM_ROOT` | `-filesystem-root` | `/storage` | Root directory for the filesystem backend. |
+| `FAKE_GCS_PUBLIC_HOST` | `-public-host` | `storage.googleapis.com` | Public host advertised by the server. |
+| `FAKE_GCS_EXTERNAL_URL` | `-external-url` | _(server address)_ | External URL returned in `Location` headers for uploads. |
+| `FAKE_GCS_DATA` | `-data` | _(none)_ | Path to a seed data directory loaded on startup. |
+| `FAKE_GCS_CORS_HEADERS` | `-cors-headers` | _(none)_ | Comma-separated extra headers for the CORS allowlist. |
+| `FAKE_GCS_LOCATION` | `-location` | `US-CENTRAL1` | Location reported for newly created buckets. |
+| `FAKE_GCS_CERT_LOCATION` | `-cert-location` | _(none)_ | Path to the TLS certificate file. |
+| `FAKE_GCS_PRIVATE_KEY_LOCATION` | `-private-key-location` | _(none)_ | Path to the TLS private key file. |
+| `FAKE_GCS_LOG_LEVEL` | `-log-level` | `info` | Log verbosity: `debug`, `info`, `warning`, `warn`, `error`. |
+| `FAKE_GCS_EVENT_PUBSUB_PROJECT_ID` | `-event.pubsub-project-id` | _(none)_ | Google Cloud project containing the Pub/Sub topic. |
+| `FAKE_GCS_EVENT_PUBSUB_TOPIC` | `-event.pubsub-topic` | _(none)_ | Pub/Sub topic name for event notifications. |
+| `FAKE_GCS_EVENT_BUCKET` | `-event.bucket` | _(none)_ | Restrict events to this bucket. Empty means all buckets. |
+| `FAKE_GCS_EVENT_OBJECT_PREFIX` | `-event.object-prefix` | _(none)_ | Restrict events to objects with this name prefix. |
+| `FAKE_GCS_EVENT_LIST` | `-event.list` | `finalize` | Comma-separated event types: `finalize`, `delete`, `metadataUpdate`, `archive`. |
+
+## Docker examples
+
+<Tabs>
+  <Tab title="HTTP mode">
+    Run the emulator over plain HTTP on port 4443:
+
+    ```bash
+    docker run -d \
+      --name fake-gcs-server \
+      -p 4443:4443 \
+      -e FAKE_GCS_SCHEME=http \
+      fsouza/fake-gcs-server
+    ```
+  </Tab>
+  <Tab title="Custom port">
+    Bind HTTPS to port 9000 instead of the default 4443:
+
+    ```bash
+    docker run -d \
+      --name fake-gcs-server \
+      -p 9000:9000 \
+      -e FAKE_GCS_PORT=9000 \
+      fsouza/fake-gcs-server
+    ```
+  </Tab>
+  <Tab title="Both schemes">
+    Serve HTTPS on 4443 and HTTP on 8000 simultaneously:
+
+    ```bash
+    docker run -d \
+      --name fake-gcs-server \
+      -p 4443:4443 \
+      -p 8000:8000 \
+      -e FAKE_GCS_SCHEME=both \
+      fsouza/fake-gcs-server
+    ```
+  </Tab>
+  <Tab title="Pub/Sub events">
+    Enable `finalize` and `delete` event notifications:
+
+    ```bash
+    docker run -d \
+      --name fake-gcs-server \
+      -p 4443:4443 \
+      -e FAKE_GCS_EVENT_PUBSUB_PROJECT_ID=my-project \
+      -e FAKE_GCS_EVENT_PUBSUB_TOPIC=gcs-events \
+      -e FAKE_GCS_EVENT_LIST=finalize,delete \
+      fsouza/fake-gcs-server
+    ```
+  </Tab>
+</Tabs>
+
+## docker-compose example
+
+```yaml
+services:
+  fake-gcs:
+    image: fsouza/fake-gcs-server
+    ports:
+      - "4443:4443"
+    environment:
+      FAKE_GCS_SCHEME: http
+      FAKE_GCS_BACKEND: memory
+      FAKE_GCS_LOG_LEVEL: debug
+```
+
+<Tip>
+  Using a `docker-compose.yml` file keeps your emulator configuration in version control alongside your application, making it easy to reproduce the same environment in CI.
+</Tip>

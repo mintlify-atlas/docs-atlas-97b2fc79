@@ -1,0 +1,257 @@
+---
+title: "Other language examples"
+description: "Use fake-gcs-server from .NET (C#), Scala, gsutil, and the gcloud CLI."
+---
+
+fake-gcs-server speaks the same JSON API as Google Cloud Storage, so any client or tool that lets you override the API endpoint will work. The examples below cover .NET (C#), Scala, gsutil, and the gcloud CLI.
+
+<Tabs>
+  <Tab title=".NET (C#)">
+    ## .NET (C\#) client example
+
+    The `Google.Cloud.Storage.V1` NuGet package exposes a `StorageClientBuilder` with a `BaseUri` property. Set it to your fake-gcs-server HTTP address.
+
+    <Warning>
+      The .NET client only works with an HTTP-hosted emulator. HTTPS is not supported for local overrides. You must also pass `-external-url` when starting the server so that resumable upload redirects resolve correctly.
+    </Warning>
+
+    ### Start the server
+
+    ```bash
+    docker run -d \
+      --name fake-gcs-server \
+      -p 8080:8080 \
+      fsouza/fake-gcs-server \
+      -scheme http \
+      -port 8080 \
+      -external-url http://localhost:8080 \
+      -backend memory
+    ```
+
+    ### Add the package
+
+    ```bash
+    dotnet add package Google.Cloud.Storage.V1 --version 4.14.0
+    ```
+
+    ### Complete example
+
+    ```csharp Program.cs
+    using System;
+    using System.IO;
+    using System.Text;
+    using Google.Cloud.Storage.V1;
+
+    var client = new StorageClientBuilder
+    {
+        // storage client for .net will only work with http hosted emulator
+        // also specifying -external-url option is required for the uploads to function properly
+        // see attached docker-compose.yaml file for details
+        BaseUri = "http://localhost:8080/storage/v1/",
+        UnauthenticatedAccess = true
+    }.Build();
+
+    Console.WriteLine("Creating bucket");
+    client.CreateBucket("test-project", "test-bucket");
+
+    Console.WriteLine("Uploading object");
+    client.UploadObject("test-bucket", "hello.txt", "text/plain",
+        new MemoryStream(Encoding.UTF8.GetBytes("Hello Google Storage")));
+
+    Console.WriteLine("Downloading object");
+    var ms = new MemoryStream();
+    client.DownloadObject("test-bucket", "hello.txt", ms);
+
+    Console.WriteLine("Downloaded: {0}", Encoding.UTF8.GetString(ms.ToArray()));
+    ```
+
+    Run with:
+
+    ```bash
+    dotnet run
+    ```
+  </Tab>
+  <Tab title="Scala">
+    ## Scala client example
+
+    Scala uses the same `google-cloud-storage` Java library. Set the host via `StorageOptions.newBuilder().setHost()`.
+
+    ### Start the server
+
+    ```bash
+    docker run -d \
+      --name fake-gcs-server \
+      -p 8080:8080 \
+      fsouza/fake-gcs-server \
+      -scheme http \
+      -port 8080 \
+      -external-url http://localhost:8080 \
+      -backend memory
+    ```
+
+    ### Add the dependency
+
+    ```scala build.sbt
+    ThisBuild / scalaVersion := "2.13.7"
+    ThisBuild / version := "0.1.0-SNAPSHOT"
+    ThisBuild / organization := "com.example"
+    ThisBuild / organizationName := "example"
+
+    lazy val root = (project in file("."))
+      .settings(
+        name := "fake-gcs-scala-client",
+        libraryDependencies += "com.google.cloud" % "google-cloud-storage" % "1.117.0"
+      )
+    ```
+
+    ### Complete example
+
+    The following program creates a bucket, uploads a string as an object, downloads it, and prints the result:
+
+    ```scala FakeGCSClient.scala
+    package example
+    import com.google.cloud.storage.{BlobId, BlobInfo, BucketInfo, StorageOptions}
+
+    import java.io.ByteArrayOutputStream
+
+    object FakeGCSClient extends App {
+
+      val opts = StorageOptions.newBuilder().setProjectId("test").setHost("http://0.0.0.0:8080").build()
+      val client = opts.getService
+
+      println("Creating a bucket")
+      val BUCKET = "test"
+      client.create(BucketInfo.of(BUCKET))
+
+      println("Uploading object")
+      val blobId = BlobId.of(BUCKET, s"testing/hello.txt")
+      val blobInfo = BlobInfo.newBuilder(blobId).build()
+      client.create(blobInfo, "Hello World!".getBytes)
+
+      println("Downloading object")
+      val baos = new ByteArrayOutputStream()
+      val blob = client.get(blobId)
+      blob.downloadTo(baos)
+      println(new String(baos.toByteArray))
+    }
+    ```
+
+    Run with:
+
+    ```bash
+    sbt run
+    ```
+  </Tab>
+  <Tab title="gsutil">
+    ## gsutil example
+
+    `gsutil` reads its endpoint configuration from boto options passed inline with `-o`. Override `Credentials:gs_json_host`, `Credentials:gs_json_port`, and disable HTTPS certificate validation to point at fake-gcs-server.
+
+    ### Start the server
+
+    ```bash
+    docker run -d \
+      --name fake-gcs-server \
+      -p 4443:4443 \
+      fsouza/fake-gcs-server
+    ```
+
+    The default server listens on port 4443 over HTTPS with a self-signed certificate.
+
+    ### Run gsutil commands
+
+    Pass the three `-o` flags to every `gsutil` invocation:
+
+    ```bash gsutil-example.sh
+    bucket_name=some-bucket
+    project_id=test-project
+
+    # create bucket
+    gsutil -o "Credentials:gs_json_host=127.0.0.1" \
+           -o "Credentials:gs_json_port=4443" \
+           -o "Boto:https_validate_certificates=False" \
+           mb -p "${project_id}" "gs://${bucket_name}"
+
+    # list objects in the bucket (should be empty)
+    gsutil -o "Credentials:gs_json_host=127.0.0.1" \
+           -o "Credentials:gs_json_port=4443" \
+           -o "Boto:https_validate_certificates=False" \
+           ls -p "${project_id}" "gs://${bucket_name}"
+
+    # upload files
+    gsutil -o "Credentials:gs_json_host=127.0.0.1" \
+           -o "Credentials:gs_json_port=4443" \
+           -o "Boto:https_validate_certificates=False" \
+           cp hello.txt image.png "gs://${bucket_name}/"
+
+    # list objects in the bucket (should include the uploaded files)
+    gsutil -o "Credentials:gs_json_host=127.0.0.1" \
+           -o "Credentials:gs_json_port=4443" \
+           -o "Boto:https_validate_certificates=False" \
+           ls -p "${project_id}" "gs://${bucket_name}"
+    ```
+
+    <Tip>
+      To avoid repeating the `-o` flags on every command, add the options to your `.boto` configuration file:
+
+      ```ini ~/.boto
+      [Credentials]
+      gs_json_host = 127.0.0.1
+      gs_json_port = 4443
+
+      [Boto]
+      https_validate_certificates = False
+      ```
+    </Tip>
+  </Tab>
+  <Tab title="gcloud CLI">
+    ## gcloud CLI example
+
+    The `gcloud` CLI reads the storage API endpoint from the `CLOUDSDK_API_ENDPOINT_OVERRIDES_STORAGE` environment variable. Set that alongside `CLOUDSDK_AUTH_DISABLE_CREDENTIALS` to skip authentication.
+
+    ### Start the server
+
+    ```bash
+    docker run -d \
+      --name fake-gcs-server \
+      -p 4443:4443 \
+      fsouza/fake-gcs-server \
+      -scheme http
+    ```
+
+    ### Set environment variables
+
+    ```bash
+    export CLOUDSDK_CORE_PROJECT=fake-project
+    export GCS_API_ENDPOINT=http://localhost:4443/
+    export CLOUDSDK_API_ENDPOINT_OVERRIDES_STORAGE=http://localhost:4443/
+    export CLOUDSDK_AUTH_DISABLE_CREDENTIALS=True
+    ```
+
+    ### Run gcloud storage commands
+
+    ```bash gcloud-example.sh
+    # Create bucket
+    gcloud storage buckets create gs://fake-bucket
+
+    # List buckets
+    gcloud storage buckets list
+
+    # Copy file to bucket
+    gcloud storage cp examples/gcloud/image.png gs://fake-bucket/image.png
+
+    # List objects
+    gcloud storage objects list gs://fake-bucket
+
+    # Tar gzip and stream to bucket
+    tar -czf - examples/gcloud/image.png | gcloud storage cp - gs://fake-bucket/image.tar.gz
+
+    # List objects
+    gcloud storage objects list gs://fake-bucket
+    ```
+
+    <Note>
+      `CLOUDSDK_AUTH_DISABLE_CREDENTIALS=True` prevents `gcloud` from attempting OAuth2 authentication. Without it, every command will fail because the emulator does not validate credentials.
+    </Note>
+  </Tab>
+</Tabs>

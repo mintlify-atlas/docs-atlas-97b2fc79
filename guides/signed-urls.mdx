@@ -1,0 +1,172 @@
+---
+title: "Signed URLs"
+description: "Use Google Cloud Storage signed URLs with fake-gcs-server by redirecting storage.googleapis.com requests to your local emulator."
+---
+
+fake-gcs-server supports signed URLs, but with important differences from production GCS. Understanding these caveats before you integrate will save you debugging time.
+
+## Caveats
+
+<Warning>
+  **No signature or expiration validation.** fake-gcs-server accepts signed URL requests regardless of the signature value, the expiration time, or any other query parameters. This means expired URLs and URLs with invalid signatures will still succeed. Do not rely on this behavior to test your signing or validation logic.
+</Warning>
+
+The two other requirements to make signed URLs work are:
+
+1. Your client must replace `storage.googleapis.com` in the signed URL with the address of your local fake-gcs-server instance.
+2. You must tell fake-gcs-server what host to expect using the `-public-host` flag.
+
+## How signed URLs work with the emulator
+
+When your application generates a signed URL, the Google SDK produces a URL like:
+
+```
+https://storage.googleapis.com/my-bucket/my-object?X-Goog-Signature=...&X-Goog-Expires=3600&...
+```
+
+fake-gcs-server does not listen on `storage.googleapis.com`. You need to rewrite the host portion of the URL so requests reach your local server, and configure the server to accept requests arriving at that host.
+
+## Starting the server with `-public-host`
+
+The `-public-host` flag tells fake-gcs-server which host to treat as the public download endpoint. Set it to the host (and port, if non-standard) your rewritten URLs will use:
+
+```shell
+docker run -d \
+  --name fake-gcs-server \
+  -p 4443:4443 \
+  fsouza/fake-gcs-server \
+  -public-host storage.127.0.0.1.nip.io:4443
+```
+
+Or with the environment variable:
+
+```shell
+docker run -d \
+  --name fake-gcs-server \
+  -p 4443:4443 \
+  -e FAKE_GCS_PUBLIC_HOST=storage.127.0.0.1.nip.io:4443 \
+  fsouza/fake-gcs-server
+```
+
+<Note>
+  [nip.io](https://nip.io) is a wildcard DNS service that resolves any subdomain of an IP address back to that IP. `storage.127.0.0.1.nip.io` resolves to `127.0.0.1`, so no `/etc/hosts` edits are needed.
+</Note>
+
+## Rewriting the host in your client
+
+After generating a signed URL, replace `storage.googleapis.com` with your local server's address before using the URL.
+
+<Tabs>
+  <Tab title="Go">
+    ```go
+    import (
+        "strings"
+    )
+
+    func localizeSignedURL(signedURL string) string {
+        return strings.Replace(
+            signedURL,
+            "https://storage.googleapis.com",
+            "https://storage.127.0.0.1.nip.io:4443",
+            1,
+        )
+    }
+    ```
+
+    When creating the GCS client in tests, use the server's custom transport so TLS verification is handled automatically:
+
+    ```go
+    import (
+        "context"
+        "crypto/tls"
+        "net/http"
+
+        "cloud.google.com/go/storage"
+        "google.golang.org/api/option"
+    )
+
+    func newTestClient(ctx context.Context) (*storage.Client, error) {
+        httpClient := &http.Client{
+            Transport: &http.Transport{
+                TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+            },
+        }
+        return storage.NewClient(ctx, option.WithHTTPClient(httpClient))
+    }
+    ```
+  </Tab>
+  <Tab title="curl">
+    Generate the signed URL through your normal path, then replace the host before making the request:
+
+    ```shell
+    SIGNED_URL="https://storage.googleapis.com/my-bucket/my-object?X-Goog-Signature=abc&X-Goog-Expires=3600"
+
+    LOCAL_URL="${SIGNED_URL/storage.googleapis.com/storage.127.0.0.1.nip.io:4443}"
+
+    curl --insecure "$LOCAL_URL"
+    ```
+
+    The `--insecure` flag skips TLS certificate verification for the self-signed certificate.
+  </Tab>
+  <Tab title="Python">
+    ```python
+    def localize_signed_url(signed_url: str) -> str:
+        return signed_url.replace(
+            "https://storage.googleapis.com",
+            "https://storage.127.0.0.1.nip.io:4443",
+        )
+    ```
+
+    Pass `verify=False` to `requests` (or configure your GCS client's HTTP session) to accept the self-signed certificate:
+
+    ```python
+    import requests
+
+    response = requests.get(localize_signed_url(signed_url), verify=False)
+    ```
+  </Tab>
+</Tabs>
+
+## What is and is not validated
+
+| Parameter | Validated by fake-gcs-server? |
+|---|---|
+| `X-Goog-Signature` | No |
+| `X-Goog-Expires` | No |
+| `X-Goog-Date` | No |
+| `X-Goog-Algorithm` | No |
+| Object existence | Yes |
+| Bucket existence | Yes |
+| HTTP method | Yes |
+
+The server routes signed URL requests to the correct bucket and object and enforces that the object exists, but it ignores all cryptographic and time-based query parameters.
+
+## Quick end-to-end example
+
+<Steps>
+  <Step title="Start the server">
+    ```shell
+    docker run -d \
+      --name fake-gcs-server \
+      -p 4443:4443 \
+      fsouza/fake-gcs-server \
+      -public-host storage.127.0.0.1.nip.io:4443
+    ```
+  </Step>
+  <Step title="Upload an object">
+    ```shell
+    curl --insecure -X POST \
+      "https://storage.127.0.0.1.nip.io:4443/upload/storage/v1/b/my-bucket/o?uploadType=media&name=hello.txt" \
+      -H "Content-Type: text/plain" \
+      --data "hello world"
+    ```
+  </Step>
+  <Step title="Build a signed-style URL and fetch the object">
+    ```shell
+    curl --insecure \
+      "https://storage.127.0.0.1.nip.io:4443/my-bucket/hello.txt?X-Goog-Signature=fakesig&X-Goog-Expires=3600"
+    ```
+
+    The server returns the object content. The signature and expiration are not checked.
+  </Step>
+</Steps>

@@ -1,0 +1,171 @@
+---
+title: "Node.js client example"
+description: "Configure the @google-cloud/storage Node.js client to talk to fake-gcs-server and run list, download, and exists operations."
+---
+
+The `@google-cloud/storage` package accepts an `apiEndpoint` option that redirects every API call to the URL you provide. Pair that with a fake project ID and you get a fully functional GCS client pointed at the emulator.
+
+## Start the server
+
+Run fake-gcs-server over plain HTTP on port 8080:
+
+```bash
+docker run -d \
+  --name fake-gcs-server \
+  -p 8080:8080 \
+  -v "${PWD}/examples/data:/data" \
+  fsouza/fake-gcs-server \
+  -scheme http \
+  -port 8080 \
+  -external-url http://localhost:8080 \
+  -backend memory
+```
+
+Or use Docker Compose. The following `docker-compose.yaml` matches the Node.js example exactly:
+
+```yaml docker-compose.yaml
+services:
+  storage:
+    image: fsouza/fake-gcs-server
+    ports:
+      - 8080:8080
+    volumes:
+      - ../data:/data
+    command: ["-scheme", "http", "-port", "8080", "-external-url", "http://localhost:8080", "-backend", "memory"]
+```
+
+## Install the client library
+
+```bash
+npm install @google-cloud/storage
+```
+
+## Configure the client
+
+Pass `apiEndpoint` pointing at the running fake-gcs-server and any string as `projectId` (the emulator does not validate it):
+
+```javascript
+const { Storage } = require("@google-cloud/storage");
+
+const storage = new Storage({
+  apiEndpoint: "http://localhost:8080",
+  projectId: "test",
+});
+```
+
+## Complete example
+
+The following script lists all buckets, downloads a file, and checks whether an object exists:
+
+```javascript index.js
+async function run() {
+  // [START storage_list_buckets]
+  // Imports the Google Cloud client library
+  const { Storage } = require("@google-cloud/storage");
+
+  // Creates a client
+  const storage = new Storage({
+    apiEndpoint: "http://localhost:8080",
+    projectId: "test",
+  });
+
+  // Lists all buckets in the current project
+  const [buckets] = await storage.getBuckets();
+  console.log("Buckets:");
+  buckets.forEach((bucket) => {
+    console.log(bucket.id);
+  });
+  // [END storage_list_buckets]
+
+  const [content] = await storage
+    .bucket("sample-bucket")
+    .file("some_file.txt")
+    .download();
+  console.log("Contents:");
+  console.log(content.toString());
+
+  console.log("Exists:");
+  console.log(
+    await storage.bucket("sample-bucket").file("some_file.txt").exists(),
+  );
+}
+
+run().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+```
+
+Run the script after the server is up:
+
+```bash
+node index.js
+```
+
+## How each operation works
+
+<AccordionGroup>
+  <Accordion title="Listing buckets">
+    `storage.getBuckets()` returns a tuple; destructure the first element to get the array of bucket objects:
+
+    ```javascript
+    const [buckets] = await storage.getBuckets();
+    buckets.forEach((bucket) => {
+      console.log(bucket.id);
+    });
+    ```
+  </Accordion>
+  <Accordion title="Downloading a file">
+    `file.download()` resolves with a tuple whose first element is a `Buffer`:
+
+    ```javascript
+    const [content] = await storage
+      .bucket("sample-bucket")
+      .file("some_file.txt")
+      .download();
+    console.log(content.toString());
+    ```
+  </Accordion>
+  <Accordion title="Checking whether an object exists">
+    `file.exists()` resolves with a single-element array containing a boolean:
+
+    ```javascript
+    const [exists] = await storage
+      .bucket("sample-bucket")
+      .file("some_file.txt")
+      .exists();
+    console.log(exists); // true or false
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Using Testcontainers
+
+When you spin up fake-gcs-server inside a Testcontainer, the port is assigned dynamically, so you cannot pass `-external-url` at startup. Update the server's external URL configuration before making any resumable uploads:
+
+```typescript
+import { Storage } from "@google-cloud/storage";
+import ky from "ky";
+import { GenericContainer } from "testcontainers";
+
+const PORT = 4443;
+
+const CONTAINER = await new GenericContainer("fsouza/fake-gcs-server:1.49.0")
+  .withEntrypoint(["/bin/fake-gcs-server", "-scheme", "http"])
+  .withExposedPorts(PORT)
+  .start();
+
+const API_ENDPOINT = `http://${CONTAINER.getHost()}:${CONTAINER.getMappedPort(
+  PORT
+)}`;
+
+await ky.put(`${API_ENDPOINT}/_internal/config`, {
+  json: { externalUrl: API_ENDPOINT },
+});
+
+const STORAGE = new Storage({ apiEndpoint: API_ENDPOINT });
+```
+
+<Tip>
+  The `/_internal/config` PUT call must happen before any resumable upload. Simple (single-request) uploads work without it, but resumable uploads follow a redirect URL that the server generates from its configured `externalUrl`.
+</Tip>

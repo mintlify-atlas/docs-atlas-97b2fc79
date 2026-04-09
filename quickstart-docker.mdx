@@ -1,0 +1,181 @@
+---
+title: "Docker quickstart"
+description: "Run fake-gcs-server as a Docker container and start making GCS API calls in minutes."
+---
+
+## Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) installed and running
+
+## Start the server
+
+<Steps>
+  <Step title="Pull the image">
+    ```bash
+    docker pull fsouza/fake-gcs-server
+    ```
+  </Step>
+
+  <Step title="Run the container">
+    By default fake-gcs-server listens on HTTPS at port `4443`.
+
+    ```bash
+    docker run -d --name fake-gcs-server -p 4443:4443 fsouza/fake-gcs-server
+    ```
+  </Step>
+
+  <Step title="Verify the server is up">
+    List buckets to confirm the server is responding. The `--insecure` flag is needed because the server uses a self-signed TLS certificate in HTTPS mode.
+
+    ```bash
+    curl --insecure https://0.0.0.0:4443/storage/v1/b
+    ```
+
+    You should see an empty bucket list:
+
+    ```json
+    {"kind":"storage#buckets","items":null,"prefixes":null}
+    ```
+  </Step>
+</Steps>
+
+## HTTP and HTTPS modes
+
+Use the `-scheme` flag to control which protocol the server uses.
+
+<Tabs>
+  <Tab title="HTTPS (default)">
+    ```bash
+    docker run -d --name fake-gcs-server -p 4443:4443 fsouza/fake-gcs-server
+    ```
+
+    Requests require either `--insecure` (curl) or TLS verification disabled in your SDK client.
+  </Tab>
+  <Tab title="HTTP">
+    ```bash
+    docker run -d --name fake-gcs-server -p 4443:4443 fsouza/fake-gcs-server -scheme http
+    ```
+
+    No TLS, so you can hit the server without any certificate configuration:
+
+    ```bash
+    curl http://0.0.0.0:4443/storage/v1/b
+    ```
+  </Tab>
+  <Tab title="Both HTTP and HTTPS">
+    Pass `-scheme both` to bind HTTPS to `-port` (default `4443`) and HTTP to `-port-http` (default `8000`) simultaneously.
+
+    ```bash
+    docker run -d --name fake-gcs-server \
+      -p 4443:4443 \
+      -p 8000:8000 \
+      fsouza/fake-gcs-server -scheme both
+    ```
+  </Tab>
+</Tabs>
+
+## Preload data with a volume mount
+
+Mount a local directory at `/data` inside the container to seed the emulator with buckets and objects on startup. The directory structure maps directly to GCS — each top-level subdirectory becomes a bucket, and the files inside become objects.
+
+```
+./examples/data/
+└── sample-bucket/
+    └── some_file.txt
+```
+
+```bash
+docker run -d --name fake-gcs-server \
+  -p 4443:4443 \
+  -v ${PWD}/examples/data:/data \
+  fsouza/fake-gcs-server
+```
+
+Verify the preloaded data is accessible:
+
+```bash
+curl --insecure https://0.0.0.0:4443/storage/v1/b
+```
+
+```json
+{"kind":"storage#buckets","items":[{"kind":"storage#bucket","id":"sample-bucket","name":"sample-bucket"}],"prefixes":null}
+```
+
+```bash
+curl --insecure https://0.0.0.0:4443/storage/v1/b/sample-bucket/o
+```
+
+```json
+{"kind":"storage#objects","items":[{"kind":"storage#object","name":"some_file.txt","id":"sample-bucket/some_file.txt","bucket":"sample-bucket","size":"33"}],"prefixes":[]}
+```
+
+## Configure with environment variables
+
+Every flag has a corresponding environment variable prefixed with `FAKE_GCS_`. Environment variables are useful when you can't pass command-line flags directly, such as in some container orchestration setups.
+
+| Flag | Environment variable |
+|---|---|
+| `-port` | `FAKE_GCS_PORT` |
+| `-port-http` | `FAKE_GCS_PORT_HTTP` |
+| `-scheme` | `FAKE_GCS_SCHEME` |
+| `-backend` | `FAKE_GCS_BACKEND` |
+| `-filesystem-root` | `FAKE_GCS_FILESYSTEM_ROOT` |
+| `-public-host` | `FAKE_GCS_PUBLIC_HOST` |
+| `-external-url` | `FAKE_GCS_EXTERNAL_URL` |
+
+Example — start the server in HTTP mode using an environment variable instead of a flag:
+
+```bash
+docker run -d --name fake-gcs-server \
+  -e FAKE_GCS_SCHEME=http \
+  -p 4443:4443 \
+  fsouza/fake-gcs-server
+```
+
+<Note>
+  Command-line flags take precedence over environment variables. Invalid values (for example, a non-numeric port) cause the server to exit with an error on startup.
+</Note>
+
+## List all available flags
+
+```bash
+docker run --rm fsouza/fake-gcs-server -help
+```
+
+## docker-compose setup
+
+The following `docker-compose.yml` starts fake-gcs-server in HTTP mode with a seed data directory, making it easy to integrate with the rest of your local stack:
+
+```yaml docker-compose.yml
+services:
+  fake-gcs-server:
+    image: fsouza/fake-gcs-server
+    ports:
+      - "4443:4443"
+    volumes:
+      - ./examples/data:/data
+    command: ["-scheme", "http"]
+    environment:
+      - FAKE_GCS_BACKEND=memory
+```
+
+<Tip>
+  Using `FAKE_GCS_BACKEND=memory` (or `-backend memory`) keeps all data in RAM. The filesystem backend (`-backend filesystem`) persists objects across container restarts when combined with a volume mount at `-filesystem-root`.
+</Tip>
+
+## Signed URLs
+
+fake-gcs-server accepts signed URL requests without validating the signature, expiration, or other query parameters. To use signed URLs:
+
+1. Configure your client to replace `storage.googleapis.com` with the address of your fake-gcs-server instance.
+2. Pass `-public-host` with the hostname your client will use:
+
+```bash
+docker run -d --name fake-gcs-server \
+  -p 4443:4443 \
+  fsouza/fake-gcs-server -public-host storage.gcs.127.0.0.1.nip.io:4443
+```
+
+<Warning>
+  Signature validation is always skipped. Do not use fake-gcs-server as a security boundary.
+</Warning>

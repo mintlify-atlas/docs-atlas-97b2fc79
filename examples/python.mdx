@@ -1,0 +1,144 @@
+---
+title: "Python client example"
+description: "Configure the google-cloud-storage Python client to talk to fake-gcs-server using the STORAGE_EMULATOR_HOST environment variable."
+---
+
+The `google-cloud-storage` Python library respects the `STORAGE_EMULATOR_HOST` environment variable. Set it to your fake-gcs-server address and use `AnonymousCredentials` to skip authentication.
+
+## Start the server
+
+Run fake-gcs-server in HTTP mode on port 4443 (the default port):
+
+```bash
+docker run -d \
+  --name fake-gcs-server \
+  -p 4443:4443 \
+  -v "${PWD}/examples/data:/data" \
+  fsouza/fake-gcs-server \
+  -scheme http
+```
+
+Verify that the server is ready:
+
+```bash
+curl http://0.0.0.0:4443/storage/v1/b
+```
+
+## Install the client library
+
+Create a virtual environment and install dependencies:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install google-cloud-storage
+```
+
+## Configure the client
+
+Set the `STORAGE_EMULATOR_HOST` environment variable before creating the client. Use `AnonymousCredentials` so the library does not attempt to look up Google Cloud credentials:
+
+```python
+import os
+from google.auth.credentials import AnonymousCredentials
+from google.cloud import storage
+
+os.environ.setdefault("STORAGE_EMULATOR_HOST", "http://localhost:4443")
+
+client = storage.Client(
+    credentials=AnonymousCredentials(),
+    project="test",
+)
+```
+
+Alternatively, set the endpoint directly on the client object instead of using the environment variable:
+
+```python
+client = storage.Client(
+    credentials=AnonymousCredentials(),
+    project="test",
+    client_options={"api_endpoint": "http://localhost:4443"},
+)
+```
+
+## Complete example
+
+The following script lists every bucket and object in the emulator, then downloads each object to a temporary file and prints its contents:
+
+```python python.py
+import tempfile
+import os
+
+from google.auth.credentials import AnonymousCredentials
+from google.cloud import storage
+
+# This endpoint assumes that you are using the default port 4443 from the container.
+# If you are using a different port, please set the environment variable STORAGE_EMULATOR_HOST.
+os.environ.setdefault("STORAGE_EMULATOR_HOST", "http://localhost:4443")
+
+
+client = storage.Client(
+    credentials=AnonymousCredentials(),
+    project="test",
+    # Alternatively instead of using the global env STORAGE_EMULATOR_HOST. You can define it here.
+    # This will set this client object to point to the local google cloud storage.
+    # client_options={"api_endpoint": "http://localhost:4443"},
+)
+
+# List the Buckets
+for bucket in client.list_buckets():
+    print(f"Bucket: {bucket.name}\n")
+
+    # List the Blobs in each Bucket
+    for blob in bucket.list_blobs():
+        print(f"Blob: {blob.name}")
+
+        # Print the content of the Blob
+        b = bucket.get_blob(blob.name)
+        with tempfile.NamedTemporaryFile() as temp_file:
+            s = b.download_to_filename(temp_file.name)
+            temp_file.seek(0, 0)
+            print(temp_file.read(), "\n")
+```
+
+Run the script after the server is up:
+
+```bash
+python python.py
+```
+
+## How each operation works
+
+<AccordionGroup>
+  <Accordion title="Listing buckets">
+    `client.list_buckets()` returns an iterator of `Bucket` objects:
+
+    ```python
+    for bucket in client.list_buckets():
+        print(f"Bucket: {bucket.name}")
+    ```
+  </Accordion>
+  <Accordion title="Listing objects in a bucket">
+    `bucket.list_blobs()` returns an iterator of `Blob` objects:
+
+    ```python
+    for blob in bucket.list_blobs():
+        print(f"Blob: {blob.name}")
+    ```
+  </Accordion>
+  <Accordion title="Downloading an object">
+    `blob.download_to_filename()` writes the object to a local file. You can also use `blob.download_as_bytes()` to get the raw bytes in memory:
+
+    ```python
+    b = bucket.get_blob("some_file.txt")
+    with tempfile.NamedTemporaryFile() as temp_file:
+        b.download_to_filename(temp_file.name)
+        temp_file.seek(0, 0)
+        print(temp_file.read())
+    ```
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+  `STORAGE_EMULATOR_HOST` must include the scheme (`http://`) when pointing at a plain-HTTP server. Without the scheme the client may attempt an HTTPS connection and fail.
+</Note>

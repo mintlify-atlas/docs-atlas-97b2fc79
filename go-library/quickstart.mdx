@@ -1,0 +1,148 @@
+---
+title: "Go library quickstart"
+description: "Add fake-gcs-server to your Go module and write your first test against the fake GCS server."
+---
+
+## Install
+
+```bash
+go get github.com/fsouza/fake-gcs-server/fakestorage
+```
+
+## Write a test
+
+The example below mirrors the official `ExampleServer_Client` example from the package. It creates a server pre-loaded with one object, reads that object back through the standard `cloud.google.com/go/storage` client, and verifies the content.
+
+<Steps>
+  <Step title="Create the server">
+    Call `NewServer` with a slice of `Object` values. Each object needs at minimum a `BucketName`, a `Name`, and a `Content` payload. The server starts immediately.
+
+    ```go
+    package myservice_test
+
+    import (
+        "context"
+        "fmt"
+        "io"
+        "testing"
+
+        "github.com/fsouza/fake-gcs-server/fakestorage"
+    )
+
+    func TestReadObject(t *testing.T) {
+        server := fakestorage.NewServer([]fakestorage.Object{
+            {
+                ObjectAttrs: fakestorage.ObjectAttrs{
+                    BucketName: "some-bucket",
+                    Name:       "some/object/file.txt",
+                },
+                Content: []byte("inside the file"),
+            },
+        })
+        defer server.Stop()
+    ```
+  </Step>
+
+  <Step title="Get a storage client">
+    Call `server.Client()` to obtain a `*storage.Client` from `cloud.google.com/go/storage`. The client is already configured to route all requests through the fake server — no real credentials or network access required.
+
+    ```go
+        client := server.Client()
+    ```
+  </Step>
+
+  <Step title="Read the object">
+    Use the client exactly as you would against real GCS.
+
+    ```go
+        object := client.Bucket("some-bucket").Object("some/object/file.txt")
+        reader, err := object.NewReader(context.Background())
+        if err != nil {
+            t.Fatal(err)
+        }
+        defer reader.Close()
+
+        data, err := io.ReadAll(reader)
+        if err != nil {
+            t.Fatal(err)
+        }
+
+        fmt.Printf("%s", data) // inside the file
+    }
+    ```
+  </Step>
+</Steps>
+
+## Stop the server
+
+Always call `server.Stop()` when the test finishes. The idiomatic pattern is:
+
+```go
+server := fakestorage.NewServer(nil)
+defer server.Stop()
+```
+
+`Stop` closes all open connections and shuts down the TCP listener (if one was started). Forgetting to call it can leave goroutines and file descriptors open between tests.
+
+## Create buckets during a test
+
+If you need a bucket that starts empty (no objects), create it explicitly after the server starts:
+
+```go
+server := fakestorage.NewServer(nil)
+defer server.Stop()
+
+server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{
+    Name: "my-bucket",
+})
+```
+
+## Upload an object during a test
+
+Use the standard `storage.Client` to upload objects just as production code would:
+
+```go
+server := fakestorage.NewServer(nil)
+defer server.Stop()
+
+server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "uploads"})
+
+client := server.Client()
+wc := client.Bucket("uploads").Object("hello.txt").NewWriter(context.Background())
+if _, err := wc.Write([]byte("hello world")); err != nil {
+    log.Fatal(err)
+}
+if err := wc.Close(); err != nil {
+    log.Fatal(err)
+}
+```
+
+## Bind to a custom host and port
+
+When your code under test constructs its own GCS client and must point it at a real address, use `NewServerWithOptions` with explicit `Host` and `Port` values:
+
+```go
+server, err := fakestorage.NewServerWithOptions(fakestorage.Options{
+    InitialObjects: []fakestorage.Object{
+        {
+            ObjectAttrs: fakestorage.ObjectAttrs{
+                BucketName: "some-bucket",
+                Name:       "some/object/file.txt",
+            },
+            Content: []byte("inside the file"),
+        },
+    },
+    Host: "127.0.0.1",
+    Port: 8081,
+})
+if err != nil {
+    log.Fatal(err)
+}
+defer server.Stop()
+
+fmt.Println(server.URL()) // https://127.0.0.1:8081
+```
+
+<Note>
+The server uses TLS by default. If you need plain HTTP (for example, to avoid certificate trust issues in an SDK that does not use `server.Client()`), set `Scheme: "http"` in `Options`.
+</Note>

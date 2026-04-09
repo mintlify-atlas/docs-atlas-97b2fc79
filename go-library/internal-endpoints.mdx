@@ -1,0 +1,148 @@
+---
+title: "Internal endpoints"
+description: "HTTP endpoints exposed by fake-gcs-server for health checks and runtime configuration changes during tests."
+---
+
+The server exposes a set of `/_internal/` endpoints that are not part of the GCS API. These endpoints let you inspect server health, reset state, or change runtime configuration from outside the process — useful in integration tests where your code runs in a separate process or container.
+
+<Note>
+These endpoints are available on all server instances, including those started in `NoListener` mode (via `server.HTTPClient()`).
+</Note>
+
+---
+
+## GET `/_internal/healthcheck`
+
+Returns `200 OK` when the server is running and ready to handle requests. Use this in container health checks or test setup loops that wait for the server to become available.
+
+```bash
+curl -k https://127.0.0.1:4443/_internal/healthcheck
+```
+
+**Response:** `200 OK` with an empty body.
+
+```bash
+# Wait for the server to be ready
+until curl -sk https://127.0.0.1:4443/_internal/healthcheck; do
+  sleep 0.1
+done
+```
+
+---
+
+## PUT `/_internal/config`
+
+Updates the server's `externalUrl` and/or `publicHost` at runtime without restarting. Use this when the address the server advertises (in `Location` headers or public download URLs) needs to change after the server has started.
+
+**Request body:**
+
+<ParamField body="externalUrl" type="string">
+  The new external URL to use in `Location` headers for resumable uploads. Corresponds to `Options.ExternalURL`.
+
+  Example: `"https://gcs.127.0.0.1.nip.io:4443"`
+</ParamField>
+
+<ParamField body="publicHost" type="string">
+  The new public host for XML API and public download URLs. Corresponds to `Options.PublicHost`.
+
+  Example: `"storage.gcs.127.0.0.1.nip.io:4443"`
+</ParamField>
+
+**Response:** `200 OK` with an empty body. Returns `400 Bad Request` if the JSON body cannot be parsed.
+
+```bash
+curl -k -X PUT https://127.0.0.1:4443/_internal/config \
+  -H "Content-Type: application/json" \
+  -d '{"externalUrl": "https://gcs.example.internal:4443"}'
+```
+
+```bash
+# Update both fields at once
+curl -k -X PUT https://127.0.0.1:4443/_internal/config \
+  -H "Content-Type: application/json" \
+  -d '{
+    "externalUrl": "https://gcs.example.internal:4443",
+    "publicHost": "storage.example.internal:4443"
+  }'
+```
+
+---
+
+## PUT/POST `/_internal/reseed`
+
+Reloads objects from the seed directory configured in `Options.Seed`. All existing data is replaced with the objects read from disk. Accepts both `PUT` and `POST`.
+
+Use this endpoint in tests that modify data and then need to restore the server to a known baseline without restarting it.
+
+**Request body:** None.
+
+**Response:** `200 OK` with a JSON array of the reloaded objects. Returns an error status if the seed directory cannot be read.
+
+```bash
+# Reseed after a test that wrote objects
+curl -k -X POST https://127.0.0.1:4443/_internal/reseed
+```
+
+```bash
+curl -k -X PUT https://127.0.0.1:4443/_internal/reseed
+```
+
+<Warning>
+This endpoint only works when `Options.Seed` was set at server startup. If no seed directory was configured, the endpoint resets the backend to an empty state.
+</Warning>
+
+---
+
+## POST `/_internal/delete_all`
+
+Deletes every object and bucket from the server's storage backend. Use this to reset the server between tests without creating a new server instance.
+
+**Request body:** None.
+
+**Response:**
+
+```json
+{"message": "All files deleted successfully"}
+```
+
+Returns `500 Internal Server Error` if the backend fails to delete the files.
+
+```bash
+curl -k -X POST https://127.0.0.1:4443/_internal/delete_all
+```
+
+### Example: reset between tests in a test suite
+
+```go
+func resetServer(t *testing.T, serverURL string) {
+    t.Helper()
+    req, err := http.NewRequestWithContext(
+        context.Background(),
+        http.MethodPost,
+        serverURL+"/_internal/delete_all",
+        nil,
+    )
+    if err != nil {
+        t.Fatal(err)
+    }
+    resp, err := http.DefaultClient.Do(req)
+    if err != nil {
+        t.Fatal(err)
+    }
+    defer resp.Body.Close()
+    if resp.StatusCode != http.StatusOK {
+        t.Fatalf("delete_all returned %d", resp.StatusCode)
+    }
+}
+```
+
+---
+
+## Endpoint summary
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/_internal/healthcheck` | Returns `200 OK` when the server is ready. |
+| `PUT` | `/_internal/config` | Updates `externalUrl` and/or `publicHost` at runtime. |
+| `PUT` or `POST` | `/_internal/reseed` | Reloads objects from the seed directory. |
+| `POST` | `/_internal/delete_all` | Deletes all buckets and objects from storage. |

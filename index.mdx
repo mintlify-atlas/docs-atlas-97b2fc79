@@ -1,97 +1,78 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "fake-gcs-server"
+description: "Google Cloud Storage emulator for integration testing — run as a Docker container or use as a Go testing library."
 ---
 
-## Setting up
+fake-gcs-server provides a fully-featured emulator for the Google Cloud Storage API. Use it to run integration tests against a local GCS-compatible server without touching real GCP resources. It works with any language that supports the GCS API and also ships as a native Go library for in-process testing.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Run with Docker" icon="docker" href="/quickstart-docker">
+    Get a local GCS server running in seconds with a single Docker command.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Use in Go tests" icon="golang" href="/quickstart-go">
+    Embed the emulator directly in your Go test suite with zero external dependencies.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Configuration reference" icon="sliders" href="/configuration/server-flags">
+    Explore all server flags, environment variables, and backend options.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Go library API" icon="book" href="/go-library/overview">
+    Full API reference for the `fakestorage` Go package.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## What is fake-gcs-server?
 
-Everything you need to create world-class documentation.
+fake-gcs-server emulates the Google Cloud Storage JSON API (`/storage/v1/`), the XML API, resumable uploads, multipart uploads, signed URLs, and Pub/Sub event notifications — all locally. Your existing GCS client libraries connect to it without code changes.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
+<CardGroup cols={3}>
+  <Card title="Any language" icon="code">
+    Works with Go, Node.js, Python, Java, .NET, Scala, and any GCS-compatible client.
   </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
+  <Card title="Two backends" icon="database">
+    Choose in-memory storage for speed or filesystem storage for persistence between runs.
   </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
+  <Card title="HTTP and HTTPS" icon="lock">
+    Supports HTTP, HTTPS, or both simultaneously on configurable ports.
   </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+</CardGroup>
 
-## Need inspiration?
+## Get started
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<Steps>
+  <Step title="Pull the Docker image">
+    ```bash
+    docker pull fsouza/fake-gcs-server
+    ```
+  </Step>
+  <Step title="Start the server">
+    ```bash
+    docker run -d --name fake-gcs-server -p 4443:4443 fsouza/fake-gcs-server
+    ```
+  </Step>
+  <Step title="Verify it's running">
+    ```bash
+    curl --insecure https://0.0.0.0:4443/storage/v1/b
+    ```
+    You should see `{"kind":"storage#buckets","items":[],"prefixes":null}`.
+  </Step>
+  <Step title="Point your client at the emulator">
+    Configure your GCS client to use `https://0.0.0.0:4443` as the storage endpoint. See [Client Examples](/examples/go) for language-specific setup.
+  </Step>
+</Steps>
+
+## Client examples
+
+<CardGroup cols={2}>
+  <Card title="Go" icon="golang" href="/examples/go">
+    Using the official Go Cloud Storage client
+  </Card>
+  <Card title="Node.js" icon="node-js" href="/examples/node">
+    Using `@google-cloud/storage`
+  </Card>
+  <Card title="Python" icon="python" href="/examples/python">
+    Using `google-cloud-storage`
+  </Card>
+  <Card title="Java" icon="java" href="/examples/java">
+    Using the Google Cloud Storage Java SDK
+  </Card>
+</CardGroup>

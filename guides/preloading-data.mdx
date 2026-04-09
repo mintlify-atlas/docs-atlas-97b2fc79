@@ -1,0 +1,143 @@
+---
+title: "Preloading data"
+description: "Seed fake-gcs-server with existing buckets and objects at startup, and reload or clear data at runtime without restarting."
+---
+
+fake-gcs-server can read an initial set of buckets and objects from a directory on disk when it starts. This lets you ship fixture data alongside your tests or Docker Compose setup instead of creating objects programmatically in every test run.
+
+## Seed directory format
+
+The seed directory uses a two-level layout: each **top-level subdirectory** becomes a bucket, and every **file inside** that subdirectory becomes an object. Nested subdirectories are supported — the relative path from the bucket directory becomes the object name.
+
+```
+seed-data/
+└── sample-bucket/
+    ├── some_file.txt
+    └── images/
+        └── logo.png
+```
+
+This structure creates one bucket named `sample-bucket` with two objects: `some_file.txt` and `images/logo.png`. An empty subdirectory creates an empty bucket with no objects.
+
+## Loading seed data
+
+<Tabs>
+  <Tab title="Docker">
+    Mount your seed directory into the container at `/data`:
+
+    ```shell
+    docker run -d \
+      --name fake-gcs-server \
+      -p 4443:4443 \
+      -v ${PWD}/examples/data:/data \
+      fsouza/fake-gcs-server
+    ```
+
+    The server reads everything under `/data` before accepting requests.
+  </Tab>
+  <Tab title="CLI / binary">
+    Pass the path to your seed directory with the `-data` flag:
+
+    ```shell
+    fake-gcs-server -data /path/to/seed/data
+    ```
+
+    You can also set the equivalent environment variable:
+
+    ```shell
+    export FAKE_GCS_DATA=/path/to/seed/data
+    fake-gcs-server
+    ```
+  </Tab>
+</Tabs>
+
+## Verifying the loaded data
+
+After starting the server, confirm that your buckets and objects were loaded correctly:
+
+```shell
+# List all buckets
+curl --insecure https://0.0.0.0:4443/storage/v1/b
+```
+
+```json
+{"kind":"storage#buckets","items":[{"kind":"storage#bucket","id":"sample-bucket","name":"sample-bucket"}],"prefixes":null}
+```
+
+```shell
+# List objects in a bucket
+curl --insecure https://0.0.0.0:4443/storage/v1/b/sample-bucket/o
+```
+
+```json
+{"kind":"storage#objects","items":[{"kind":"storage#object","name":"some_file.txt","id":"sample-bucket/some_file.txt","bucket":"sample-bucket","size":"33"}],"prefixes":[]}
+```
+
+<Note>
+  The `--insecure` flag is required because the server uses a self-signed TLS certificate by default. See [TLS certificates](/guides/tls-certificates) for details, including how to run with plain HTTP instead.
+</Note>
+
+## Reloading data at runtime
+
+You can reseed the server from the original seed directory **without restarting** it. This is useful in test suites that need a clean, known-good state between test cases.
+
+```shell
+curl --insecure -X POST https://0.0.0.0:4443/_internal/reseed
+```
+
+The server wipes its current state and reloads objects from the directory that was provided via `-data` at startup. The response contains the list of reloaded objects.
+
+<Warning>
+  `/_internal/reseed` returns an empty result and leaves the server in a clean state if no `-data` directory was configured at startup.
+</Warning>
+
+## Clearing all data
+
+To delete every bucket and object without reloading seed data, call the delete endpoint:
+
+```shell
+curl --insecure -X POST https://0.0.0.0:4443/_internal/delete_all
+```
+
+```json
+{"message":"All files deleted successfully"}
+```
+
+This is equivalent to starting a fresh server with no data. Unlike `/_internal/reseed`, it does not restore the seed directory contents.
+
+## Workflow example
+
+The following steps show a typical integration-test workflow that uses the seed directory and the runtime endpoints together:
+
+<Steps>
+  <Step title="Prepare your seed directory">
+    Create the directory structure your tests depend on:
+
+    ```
+    testdata/
+    └── my-bucket/
+        ├── config.json
+        └── assets/
+            └── banner.png
+    ```
+  </Step>
+  <Step title="Start the server with the seed directory">
+    ```shell
+    docker run -d \
+      --name fake-gcs-server \
+      -p 4443:4443 \
+      -v ${PWD}/testdata:/data \
+      fsouza/fake-gcs-server
+    ```
+  </Step>
+  <Step title="Run your tests">
+    Your tests read and write objects against `https://0.0.0.0:4443`.
+  </Step>
+  <Step title="Reset state between test suites">
+    Call `/_internal/reseed` to restore the original seed data before the next suite runs:
+
+    ```shell
+    curl --insecure -X POST https://0.0.0.0:4443/_internal/reseed
+    ```
+  </Step>
+</Steps>

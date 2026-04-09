@@ -1,0 +1,196 @@
+---
+title: "Options"
+description: "All fields of the Options struct used to configure the fake GCS server."
+---
+
+Pass an `Options` value to `NewServerWithOptions` to control how the server starts and behaves.
+
+```go
+server, err := fakestorage.NewServerWithOptions(fakestorage.Options{
+    Host:       "127.0.0.1",
+    Port:       4443,
+    NoListener: false,
+})
+```
+
+## Fields
+
+<ParamField path="InitialObjects" type="[]Object">
+  Objects to pre-load into the server when it starts. Each entry must have at least `ObjectAttrs.BucketName` and `ObjectAttrs.Name` set. Mutually exclusive with `Seed` — providing both returns an error.
+
+  ```go
+  InitialObjects: []fakestorage.Object{
+      {
+          ObjectAttrs: fakestorage.ObjectAttrs{
+              BucketName: "my-bucket",
+              Name:       "data/file.txt",
+          },
+          Content: []byte("hello"),
+      },
+  },
+  ```
+</ParamField>
+
+<ParamField path="StorageRoot" type="string">
+  Path to a directory on disk to use as persistent storage. When set, the server uses a filesystem backend instead of the default in-memory backend. Useful when you want data to survive server restarts within a test suite.
+
+  ```go
+  StorageRoot: "/tmp/gcs-test-data",
+  ```
+</ParamField>
+
+<ParamField path="Seed" type="string">
+  Path to a directory tree that seeds the server with objects on startup. The directory structure must follow the convention `<seed>/<bucket>/<object-path>`. Each file becomes an object. Mutually exclusive with `InitialObjects`.
+
+  ```
+  testdata/
+  └── my-bucket/
+      └── data/
+          └── file.txt   → object "data/file.txt" in bucket "my-bucket"
+  ```
+
+  ```go
+  Seed: "testdata",
+  ```
+</ParamField>
+
+<ParamField path="Scheme" type="string" default="https">
+  HTTP scheme for the TCP listener. Accepted values are `"http"` and `"https"`. When set to `"http"` the server starts without TLS. Defaults to `"https"` (TLS enabled via `httptest.Server.StartTLS`).
+
+  ```go
+  Scheme: "http",
+  ```
+</ParamField>
+
+<ParamField path="Host" type="string">
+  Host address for the TCP listener. Defaults to the loopback address chosen by `httptest.Server`. Set this alongside `Port` to bind to a specific interface.
+
+  ```go
+  Host: "127.0.0.1",
+  ```
+</ParamField>
+
+<ParamField path="Port" type="uint16">
+  TCP port to listen on. When `0` (the default), the OS assigns a random free port. Set to a specific value when your tests must know the port in advance.
+
+  ```go
+  Port: 4443,
+  ```
+</ParamField>
+
+<ParamField path="NoListener" type="boolean" default="false">
+  When `true`, the server does not start a TCP listener. Client requests are handled through an internal mocked transport. This is the fastest mode — there is no network stack overhead or port allocation. Use `server.Client()` or `server.HTTPClient()` to obtain a client.
+
+  ```go
+  NoListener: true,
+  ```
+
+  <Note>
+  `server.URL()` returns an empty string in NoListener mode unless you also set `ExternalURL`.
+  </Note>
+</ParamField>
+
+<ParamField path="ExternalURL" type="string">
+  An externally reachable URL for the server, such as `https://gcs.127.0.0.1.nip.io:4443`. When set, `server.URL()` returns this value and the server uses it in `Location` headers for resumable uploads. Corresponds to the real GCS JSON API base URL (`https://www.googleapis.com`).
+
+  ```go
+  ExternalURL: "https://gcs.127.0.0.1.nip.io:4443",
+  ```
+</ParamField>
+
+<ParamField path="PublicHost" type="string" default="storage.googleapis.com">
+  Host used for public object access (the XML API). When set, objects are served at both `https://<PublicHost>/<bucket>/<object>` and `https://<bucket>.<PublicHost>/<object>`. Defaults to `storage.googleapis.com`.
+
+  ```go
+  PublicHost: "storage.gcs.127.0.0.1.nip.io:4443",
+  ```
+</ParamField>
+
+<ParamField path="AllowedCORSHeaders" type="[]string">
+  Additional HTTP headers to add to the CORS `Access-Control-Allow-Headers` response header. The server always allows `Content-Type`, `Content-Encoding`, `Range`, and `Content-Range`. Add custom metadata headers here when testing browser uploads.
+
+  ```go
+  AllowedCORSHeaders: []string{"X-Goog-Meta-Uploader"},
+  ```
+</ParamField>
+
+<ParamField path="Writer" type="io.Writer">
+  Destination for HTTP access logs and internal log output. When set, the server wraps its handler with `gorilla/handlers.LoggingHandler`. Pass `os.Stderr` or a `bytes.Buffer` captured in your test.
+
+  ```go
+  Writer: os.Stderr,
+  ```
+</ParamField>
+
+<ParamField path="EventOptions" type="EventManagerOptions">
+  Configuration for Pub/Sub event notifications. `EventManagerOptions` is an alias for `notification.EventManagerOptions` and controls which GCS events are published and the Google Cloud Function URL to publish them to.
+
+  ```go
+  EventOptions: fakestorage.EventManagerOptions{
+      // fields defined in internal/notification
+  },
+  ```
+</ParamField>
+
+<ParamField path="BucketsLocation" type="string">
+  Location string returned in bucket metadata responses (the `location` field in the JSON API). Use this to simulate a specific GCS region in your tests.
+
+  ```go
+  BucketsLocation: "US-CENTRAL1",
+  ```
+</ParamField>
+
+<ParamField path="CertificateLocation" type="string">
+  Path to a PEM-encoded TLS certificate file. When both `CertificateLocation` and `PrivateKeyLocation` are set, the server loads this key pair instead of the self-signed certificate generated by `httptest.Server`.
+
+  ```go
+  CertificateLocation: "/etc/certs/server.crt",
+  PrivateKeyLocation:  "/etc/certs/server.key",
+  ```
+</ParamField>
+
+<ParamField path="PrivateKeyLocation" type="string">
+  Path to a PEM-encoded private key file. Must be set together with `CertificateLocation`.
+</ParamField>
+
+## Common configurations
+
+### Fastest in-process test setup
+
+```go
+server, err := fakestorage.NewServerWithOptions(fakestorage.Options{
+    NoListener:     true,
+    InitialObjects: objects,
+})
+```
+
+### HTTP listener on a fixed port
+
+```go
+server, err := fakestorage.NewServerWithOptions(fakestorage.Options{
+    Scheme: "http",
+    Host:   "127.0.0.1",
+    Port:   9000,
+})
+```
+
+### Filesystem-backed server with seed data
+
+```go
+server, err := fakestorage.NewServerWithOptions(fakestorage.Options{
+    StorageRoot: t.TempDir(),
+    Seed:        "testdata",
+})
+```
+
+### Custom TLS certificate
+
+```go
+server, err := fakestorage.NewServerWithOptions(fakestorage.Options{
+    Host:                "0.0.0.0",
+    Port:                4443,
+    CertificateLocation: "certs/server.crt",
+    PrivateKeyLocation:  "certs/server.key",
+    ExternalURL:         "https://gcs.example.internal:4443",
+})
+```

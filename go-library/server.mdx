@@ -1,0 +1,278 @@
+---
+title: "Server"
+description: "Reference for all exported functions and methods on the fake GCS Server type."
+---
+
+## Constructors
+
+### NewServer
+
+```go
+func NewServer(objects []Object) *Server
+```
+
+Creates a new server pre-loaded with `objects` and starts it using default options (TLS, random port, in-memory storage). This is a convenience wrapper around `NewServerWithOptions`.
+
+```go
+server := fakestorage.NewServer([]fakestorage.Object{
+    {
+        ObjectAttrs: fakestorage.ObjectAttrs{
+            BucketName: "my-bucket",
+            Name:       "data/hello.txt",
+        },
+        Content: []byte("hello"),
+    },
+})
+defer server.Stop()
+```
+
+<ParamField path="objects" type="[]Object">
+  Objects to pre-load into the server. Each object must have at least a `BucketName` and a `Name`. Pass `nil` to start with an empty server.
+</ParamField>
+
+<ResponseField name="*Server" type="*Server">
+  A running server. Never returns an error — panics if server creation fails.
+</ResponseField>
+
+---
+
+### NewServerWithOptions
+
+```go
+func NewServerWithOptions(options Options) (*Server, error)
+```
+
+Creates and starts a server configured according to `options`. Prefer this over `NewServer` when you need to control the host, port, scheme, TLS certificates, or any other option.
+
+```go
+server, err := fakestorage.NewServerWithOptions(fakestorage.Options{
+    Host:       "127.0.0.1",
+    Port:       9000,
+    Scheme:     "http",
+    NoListener: false,
+})
+if err != nil {
+    log.Fatal(err)
+}
+defer server.Stop()
+```
+
+<ParamField path="options" type="Options" required>
+  Server configuration. See [Options](/go-library/options) for a full field reference.
+</ParamField>
+
+<ResponseField name="*Server" type="*Server">
+  A running server instance.
+</ResponseField>
+
+<ResponseField name="error" type="error">
+  Non-nil if the server could not be created (for example, the requested port is already in use or TLS certificate loading fails).
+</ResponseField>
+
+---
+
+### NewServerWithHostPort
+
+```go
+func NewServerWithHostPort(objects []Object, host string, port uint16) (*Server, error)
+```
+
+<Warning>
+Deprecated. Use `NewServerWithOptions` instead.
+</Warning>
+
+Creates a server that listens on a specific host and port. Equivalent to:
+
+```go
+NewServerWithOptions(Options{
+    InitialObjects: objects,
+    Host:           host,
+    Port:           port,
+})
+```
+
+---
+
+## Client access
+
+### Client
+
+```go
+func (s *Server) Client() *storage.Client
+```
+
+Returns a `*storage.Client` from `cloud.google.com/go/storage` that is pre-configured to send all requests to the fake server. No real Google credentials are required.
+
+```go
+server := fakestorage.NewServer(nil)
+defer server.Stop()
+
+client := server.Client()
+attrs, err := client.Bucket("my-bucket").Attrs(context.Background())
+```
+
+<ResponseField name="*storage.Client" type="*storage.Client">
+  A fully initialised GCS client. The caller is responsible for closing it when done (call `client.Close()`), though in short-lived tests this is often omitted.
+</ResponseField>
+
+---
+
+### HTTPClient
+
+```go
+func (s *Server) HTTPClient() *http.Client
+```
+
+Returns a `*http.Client` whose transport routes all requests through the fake server. Use this when you need to construct your own GCS client with custom options:
+
+```go
+httpClient := server.HTTPClient()
+gcsClient, err := storage.NewClient(
+    context.Background(),
+    option.WithHTTPClient(httpClient),
+    option.WithCredentials(&google.Credentials{}),
+)
+```
+
+<ResponseField name="*http.Client" type="*http.Client">
+  An HTTP client backed by the fake server's internal transport.
+</ResponseField>
+
+---
+
+### HTTPHandler
+
+```go
+func (s *Server) HTTPHandler() http.Handler
+```
+
+Returns the underlying `http.Handler` that implements the GCS API. Use this to embed the fake server inside an existing `httptest.Server` or reverse proxy.
+
+```go
+ts := httptest.NewServer(server.HTTPHandler())
+defer ts.Close()
+```
+
+<ResponseField name="http.Handler" type="http.Handler">
+  The mux handler that processes GCS API, upload, download, and internal requests.
+</ResponseField>
+
+---
+
+## URL helpers
+
+### URL
+
+```go
+func (s *Server) URL() string
+```
+
+Returns the server's base URL. If `ExternalURL` was set in `Options`, that value is returned; otherwise the URL of the underlying `httptest.Server` is returned. Returns an empty string in `NoListener` mode when `ExternalURL` is not set.
+
+```go
+fmt.Println(server.URL()) // e.g. https://127.0.0.1:54321
+```
+
+<ResponseField name="string" type="string">
+  The base URL, including scheme and host.
+</ResponseField>
+
+---
+
+### PublicURL
+
+```go
+func (s *Server) PublicURL() string
+```
+
+Returns the URL used for public object downloads (the XML API). Defaults to `https://storage.googleapis.com` unless `PublicHost` was set in `Options`.
+
+```go
+fmt.Println(server.PublicURL()) // https://storage.googleapis.com
+```
+
+<ResponseField name="string" type="string">
+  The public download base URL.
+</ResponseField>
+
+---
+
+## Lifecycle
+
+### Stop
+
+```go
+func (s *Server) Stop()
+```
+
+Stops the server. Closes the TCP listener (if any), marks the internal transport as closed, and shuts down the notification registry. Always call `Stop` when you are done with the server, typically via `defer`.
+
+```go
+server := fakestorage.NewServer(nil)
+defer server.Stop() // called when the enclosing function returns
+```
+
+---
+
+## Backend access
+
+### Backend
+
+```go
+func (s *Server) Backend() backend.Storage
+```
+
+Returns the underlying `backend.Storage` instance. The backend is the interface implemented by both the in-memory and filesystem storage backends. Use this only when you need low-level access to stored data that is not exposed through the GCS API.
+
+```go
+b := server.Backend()
+```
+
+<ResponseField name="backend.Storage" type="backend.Storage">
+  The storage backend used by the server. Defined in `github.com/fsouza/fake-gcs-server/internal/backend`.
+</ResponseField>
+
+---
+
+## Bucket management
+
+### CreateBucketWithOpts
+
+```go
+func (s *Server) CreateBucketWithOpts(opts CreateBucketOpts)
+```
+
+Creates a bucket in the fake server. Use this in tests when you need a bucket to exist before uploading objects through the GCS API. If the underlying backend returns an error, this method panics.
+
+```go
+server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{
+    Name:              "my-bucket",
+    VersioningEnabled: true,
+})
+```
+
+<ParamField path="opts" type="CreateBucketOpts" required>
+  Bucket creation options. See [Objects and buckets](/go-library/objects-buckets) for the full field list.
+</ParamField>
+
+---
+
+### CreateBucket
+
+```go
+func (s *Server) CreateBucket(name string)
+```
+
+<Warning>
+Deprecated. Use `CreateBucketWithOpts` instead.
+</Warning>
+
+Creates a bucket with default attributes (versioning disabled, no default event-based hold). Panics if the backend returns an error.
+
+```go
+server.CreateBucket("my-bucket")
+```
+
+<ParamField path="name" type="string" required>
+  The bucket name. Must match the pattern `^[a-z0-9][a-z0-9._-]*[a-z0-9]$`: lowercase letters, digits, hyphens, underscores, and dots, at least two characters.
+</ParamField>

@@ -1,0 +1,161 @@
+---
+title: "Pub/Sub notifications"
+description: "Configure fake-gcs-server to publish object lifecycle events to a real Google Cloud Pub/Sub topic."
+---
+
+fake-gcs-server can publish object lifecycle events to a Google Cloud Pub/Sub topic, mirroring the notification behavior of production GCS. This lets you test Pub/Sub-driven pipelines — such as Cloud Functions or Dataflow jobs that react to GCS events — against the local emulator.
+
+<Note>
+  Events are published to a **real** Google Cloud Pub/Sub topic, not an emulated one. You need a GCP project with a Pub/Sub topic and valid application credentials available to the process running fake-gcs-server.
+</Note>
+
+## Supported event types
+
+| Event | Flag value | Triggered when |
+|---|---|---|
+| Object finalize | `finalize` | An object is created or overwritten |
+| Object delete | `delete` | An object is permanently deleted |
+| Metadata update | `metadataUpdate` | An object's metadata is changed |
+| Object archive | `archive` | An object becomes a non-current version (requires bucket versioning) |
+
+## Configuration flags
+
+| Flag | Environment variable | Description |
+|---|---|---|
+| `-event.pubsub-project-id` | `FAKE_GCS_EVENT_PUBSUB_PROJECT_ID` | GCP project ID that contains the Pub/Sub topic |
+| `-event.pubsub-topic` | `FAKE_GCS_EVENT_PUBSUB_TOPIC` | Pub/Sub topic name to publish events on |
+| `-event.list` | `FAKE_GCS_EVENT_LIST` | Comma-separated list of events to publish (default: `finalize`) |
+| `-event.bucket` | `FAKE_GCS_EVENT_BUCKET` | If set, only objects in this bucket generate events |
+| `-event.object-prefix` | `FAKE_GCS_EVENT_OBJECT_PREFIX` | If set, only objects whose name starts with this prefix generate events |
+
+Both `-event.pubsub-project-id` and `-event.pubsub-topic` are required to enable notifications. Omitting either flag disables event publishing entirely.
+
+## Starting the server with notifications
+
+<Tabs>
+  <Tab title="Docker">
+    ```shell
+    docker run -d \
+      --name fake-gcs-server \
+      -p 4443:4443 \
+      -v ~/.config/gcloud:/root/.config/gcloud:ro \
+      fsouza/fake-gcs-server \
+      -event.pubsub-project-id my-gcp-project \
+      -event.pubsub-topic gcs-events \
+      -event.list finalize,delete,metadataUpdate
+    ```
+
+    The volume mount provides application default credentials so the server can authenticate with Pub/Sub.
+  </Tab>
+  <Tab title="CLI / binary">
+    ```shell
+    fake-gcs-server \
+      -event.pubsub-project-id my-gcp-project \
+      -event.pubsub-topic gcs-events \
+      -event.list finalize,delete,metadataUpdate
+    ```
+
+    The binary uses [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials) from the environment.
+  </Tab>
+</Tabs>
+
+## Filtering events
+
+You can narrow which objects generate notifications using the bucket and object-prefix filters.
+
+### Filter by bucket
+
+Publish events only for objects in `uploads-bucket`:
+
+```shell
+fake-gcs-server \
+  -event.pubsub-project-id my-gcp-project \
+  -event.pubsub-topic gcs-events \
+  -event.list finalize \
+  -event.bucket uploads-bucket
+```
+
+### Filter by object prefix
+
+Publish events only for objects whose name starts with `images/`:
+
+```shell
+fake-gcs-server \
+  -event.pubsub-project-id my-gcp-project \
+  -event.pubsub-topic gcs-events \
+  -event.list finalize,delete \
+  -event.object-prefix images/
+```
+
+Both filters can be combined. When both are set, an object must match **both** the bucket name and the prefix to generate an event.
+
+## Event payload format
+
+Each Pub/Sub message carries a JSON body and a set of message attributes. The JSON body follows the GCS object resource format:
+
+```json
+{
+  "kind": "storage#object",
+  "id": "my-bucket/my-object/1712345678000000",
+  "name": "my-object",
+  "bucket": "my-bucket",
+  "generation": "1712345678000000",
+  "contentType": "text/plain",
+  "storageClass": "STANDARD",
+  "size": "42",
+  "md5Hash": "...",
+  "crc32c": "..."
+}
+```
+
+The message attributes include:
+
+| Attribute | Description |
+|---|---|
+| `bucketId` | Name of the bucket |
+| `objectId` | Name of the object |
+| `objectGeneration` | Object generation number |
+| `eventType` | One of `OBJECT_FINALIZE`, `OBJECT_DELETE`, `OBJECT_METADATA_UPDATE`, `OBJECT_ARCHIVE` |
+| `eventTime` | RFC 3339 timestamp of the event |
+| `payloadFormat` | Always `JSON_API_V1` |
+
+## Example: all-events setup with Docker Compose
+
+```yaml
+services:
+  fake-gcs:
+    image: fsouza/fake-gcs-server
+    ports:
+      - "4443:4443"
+    volumes:
+      - "${HOME}/.config/gcloud:/root/.config/gcloud:ro"
+    command: >
+      -event.pubsub-project-id my-gcp-project
+      -event.pubsub-topic gcs-events
+      -event.list finalize,delete,metadataUpdate,archive
+      -event.bucket processed-files
+      -event.object-prefix results/
+```
+
+This configuration publishes all four event types, but only for objects whose name starts with `results/` inside the `processed-files` bucket.
+
+## Verifying events are firing
+
+After starting the server, upload an object and check your Pub/Sub subscription for the message:
+
+```shell
+# Upload an object
+curl --insecure -X POST \
+  "https://0.0.0.0:4443/upload/storage/v1/b/my-bucket/o?uploadType=media&name=test.txt" \
+  -H "Content-Type: text/plain" \
+  --data "hello"
+
+# Pull the event from your subscription
+gcloud pubsub subscriptions pull my-subscription --auto-ack --limit=1
+```
+
+The server logs a line for each event it publishes:
+
+```
+sent event OBJECT_FINALIZE for object my-bucket/test.txt/1712345678000000
+```

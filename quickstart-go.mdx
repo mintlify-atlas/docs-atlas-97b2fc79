@@ -1,0 +1,188 @@
+---
+title: "Go quickstart"
+description: "Embed fake-gcs-server directly in your Go test suite using the fakestorage package."
+---
+
+The `fakestorage` package lets you start a fully functional GCS emulator inside your test process. It returns a pre-configured `*storage.Client` that talks to the fake server, so your application code doesn't need any changes.
+
+## Install the package
+
+```bash
+go get github.com/fsouza/fake-gcs-server/fakestorage
+```
+
+## Write your first test
+
+The example below creates a server pre-loaded with one object, then reads it back through the official GCS client — exactly as your production code would.
+
+```go
+package mypackage_test
+
+import (
+	"context"
+	"fmt"
+	"io"
+
+	"github.com/fsouza/fake-gcs-server/fakestorage"
+)
+
+func ExampleServer_Client() {
+	server := fakestorage.NewServer([]fakestorage.Object{
+		{
+			ObjectAttrs: fakestorage.ObjectAttrs{
+				BucketName: "some-bucket",
+				Name:       "some/object/file.txt",
+			},
+			Content: []byte("inside the file"),
+		},
+	})
+	defer server.Stop()
+
+	client := server.Client()
+
+	object := client.Bucket("some-bucket").Object("some/object/file.txt")
+	reader, err := object.NewReader(context.Background())
+	if err != nil {
+		panic(err)
+	}
+	defer reader.Close()
+
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("%s", data)
+	// Output: inside the file
+}
+```
+
+<Steps>
+  <Step title="Create the server">
+    Call `fakestorage.NewServer` with a slice of `fakestorage.Object` values. Each object needs at minimum a `BucketName`, a `Name`, and optional `Content`. The server starts immediately and listens on an ephemeral port.
+
+    ```go
+    server := fakestorage.NewServer([]fakestorage.Object{
+        {
+            ObjectAttrs: fakestorage.ObjectAttrs{
+                BucketName: "some-bucket",
+                Name:       "some/object/file.txt",
+            },
+            Content: []byte("inside the file"),
+        },
+    })
+    defer server.Stop()
+    ```
+  </Step>
+
+  <Step title="Get a GCS client">
+    `server.Client()` returns a `*storage.Client` from the official `cloud.google.com/go/storage` package. It is pre-configured to route all requests to the fake server — no credentials or environment variables required.
+
+    ```go
+    client := server.Client()
+    ```
+  </Step>
+
+  <Step title="Use the client as normal">
+    Your application code can use the client exactly as it would with the real GCS API.
+
+    ```go
+    reader, err := client.Bucket("some-bucket").Object("some/object/file.txt").NewReader(context.Background())
+    if err != nil {
+        panic(err)
+    }
+    defer reader.Close()
+
+    data, err := io.ReadAll(reader)
+    if err != nil {
+        panic(err)
+    }
+    fmt.Printf("%s", data)
+    ```
+  </Step>
+
+  <Step title="Stop the server">
+    `server.Stop()` closes all connections and frees resources. Use `defer server.Stop()` immediately after creating the server to ensure cleanup even when a test panics.
+  </Step>
+</Steps>
+
+## Advanced: bind to a specific host and port
+
+By default `NewServer` picks an available port automatically. Use `NewServerWithOptions` when you need a fixed address — for example, when your code reads the GCS endpoint from a config file.
+
+```go
+server, err := fakestorage.NewServerWithOptions(fakestorage.Options{
+    InitialObjects: []fakestorage.Object{
+        {
+            ObjectAttrs: fakestorage.ObjectAttrs{
+                BucketName: "some-bucket",
+                Name:       "some/object/file.txt",
+            },
+            Content: []byte("inside the file"),
+        },
+    },
+    Host: "127.0.0.1",
+    Port: 8081,
+})
+if err != nil {
+    panic(err)
+}
+defer server.Stop()
+
+client := server.Client()
+```
+
+## Key options
+
+`fakestorage.Options` gives you full control over the server's behavior:
+
+| Field | Type | Description |
+|---|---|---|
+| `InitialObjects` | `[]Object` | Objects to preload on startup. |
+| `StorageRoot` | `string` | Directory for filesystem-backed storage. Leave empty for in-memory storage. |
+| `Seed` | `string` | Path to a directory of seed data (same format as the Docker `-data` flag). |
+| `Host` | `string` | Bind address (default: chosen automatically). |
+| `Port` | `uint16` | Bind port (default: chosen automatically). |
+| `Scheme` | `string` | `"http"` or `"https"` (default: `"https"`). |
+| `NoListener` | `bool` | When `true`, the server handles requests via an internal transport without opening a TCP socket. |
+| `PublicHost` | `string` | Hostname for public/XML API access and signed URL routing. |
+| `AllowedCORSHeaders` | `[]string` | Additional headers to add to the CORS allowlist. |
+| `EventOptions` | `EventManagerOptions` | Pub/Sub notification settings. |
+
+<Tip>
+  Set `NoListener: true` when you're only using `server.Client()` and don't need an actual TCP port. Requests go through an in-memory transport and the test runs slightly faster.
+</Tip>
+
+## Seed data from a directory
+
+You can preload the server from a directory tree instead of constructing `Object` slices by hand:
+
+```go
+server, err := fakestorage.NewServerWithOptions(fakestorage.Options{
+    Seed: "./testdata",
+})
+```
+
+The directory layout mirrors the Docker volume convention: each top-level subdirectory is a bucket, and the files inside are objects.
+
+```
+testdata/
+└── my-bucket/
+    ├── config.json
+    └── uploads/
+        └── image.png
+```
+
+<Note>
+  You cannot set both `InitialObjects` and `Seed` at the same time. Choose one or the other.
+</Note>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Go library reference" icon="book" href="https://pkg.go.dev/github.com/fsouza/fake-gcs-server/fakestorage">
+    Full API documentation for the `fakestorage` package on pkg.go.dev.
+  </Card>
+  <Card title="Docker quickstart" icon="docker" href="/quickstart-docker">
+    Run fake-gcs-server as a standalone container for multi-language integration tests.
+  </Card>
+</CardGroup>

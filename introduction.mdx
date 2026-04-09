@@ -1,0 +1,68 @@
+---
+title: "Introduction"
+description: "fake-gcs-server is a Google Cloud Storage emulator you can run as a standalone server or embed directly in your Go test suite."
+---
+
+fake-gcs-server provides a faithful implementation of the Google Cloud Storage API. Whether you're testing a service written in any language or writing Go unit tests, it lets you run your code against a real GCS-compatible endpoint without touching production infrastructure.
+
+## What it solves
+
+Working against the real GCS API in tests creates slow, flaky, and expensive feedback loops. fake-gcs-server removes those problems by:
+
+- Running entirely in-process or in a local container — no network calls to Google
+- Accepting the same JSON API, XML API, and upload paths that the official SDKs use
+- Preloading buckets and objects from a local directory so your tests start with realistic data
+
+## Two ways to run it
+
+<CardGroup cols={2}>
+  <Card title="Standalone server" icon="docker" href="/quickstart-docker">
+    Run as a Docker container or binary. Any language, any framework. Ideal for integration tests and local development environments.
+  </Card>
+  <Card title="Go library" icon="code" href="/quickstart-go">
+    Import `fakestorage` into your Go test files. The server starts in-process and shuts down with your test — no ports, no cleanup scripts.
+  </Card>
+</CardGroup>
+
+## Supported API surface
+
+fake-gcs-server implements the parts of the GCS API that applications use most:
+
+| Feature | Details |
+|---|---|
+| **JSON API** | Full CRUD for buckets and objects at `/storage/v1/...` |
+| **XML API** | Public object access via virtual-hosted and path-style requests |
+| **Resumable uploads** | Upload API at `/upload/storage/v1/...` including `uploadType=resumable` |
+| **gRPC** | Multiplexed on the same port as HTTP via `Content-Type: application/grpc` |
+| **Pub/Sub notifications** | Object lifecycle events (`finalize`, `delete`, `metadataUpdate`, `archive`) published to a real or emulated Pub/Sub topic |
+| **Signed URLs** | Signature validation is skipped; redirect your client to point at the emulator via `-public-host` |
+| **Batch requests** | `POST /batch/storage/v1` multipart batch endpoint |
+
+## When to use Docker vs the Go library
+
+**Use Docker (or the binary) when:**
+
+- Your tests are written in Python, Node.js, Java, or any language other than Go
+- You want a persistent emulator that multiple services can share during development
+- You're running integration tests in CI and prefer a sidecar container
+
+**Use the Go library when:**
+
+- You're already writing Go tests and want zero external dependencies
+- You need fine-grained control over which objects exist at the start of each test case
+- You want the emulator lifecycle tied directly to `testing.T`
+
+<Note>
+  The Go library and the standalone server share the same backend and routing logic. The API surface they expose is identical.
+</Note>
+
+## Get started
+
+<CardGroup cols={2}>
+  <Card title="Docker quickstart" icon="docker" href="/quickstart-docker">
+    Pull the image, start the container, and verify with curl in under two minutes.
+  </Card>
+  <Card title="Go quickstart" icon="code" href="/quickstart-go">
+    Add the package, spin up a server, and write your first test.
+  </Card>
+</CardGroup>

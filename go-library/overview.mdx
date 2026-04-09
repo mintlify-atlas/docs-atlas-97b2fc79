@@ -1,0 +1,70 @@
+---
+title: "Go library overview"
+description: "Use the fakestorage package to run a Google Cloud Storage emulator in-process during your Go tests."
+---
+
+The `fakestorage` package provides a fully in-process fake implementation of the Google Cloud Storage API. You can use it in Go tests without running a separate process or container — the fake server starts in the same binary and returns a pre-configured `*storage.Client` that talks to it transparently.
+
+## Import path
+
+```go
+import "github.com/fsouza/fake-gcs-server/fakestorage"
+```
+
+## Two usage patterns
+
+<CardGroup cols={2}>
+  <Card title="NoListener mode" icon="bolt">
+    The server handles requests through an internal mocked transport with no TCP socket. Fastest option — zero port allocation, no network stack involved. Best for most unit and integration tests.
+  </Card>
+  <Card title="TCP listener mode" icon="globe">
+    The server binds to a real TCP port (TLS by default). Use this when your code under test constructs its own GCS client and you need to point it at a real address.
+  </Card>
+</CardGroup>
+
+### NoListener mode (in-process, fastest)
+
+```go
+server, err := fakestorage.NewServerWithOptions(fakestorage.Options{
+    NoListener: true,
+})
+if err != nil {
+    log.Fatal(err)
+}
+defer server.Stop()
+
+client := server.Client() // pre-configured to talk to the fake
+```
+
+### TCP listener mode
+
+```go
+server, err := fakestorage.NewServerWithOptions(fakestorage.Options{
+    Host: "127.0.0.1",
+    Port: 8081,
+})
+if err != nil {
+    log.Fatal(err)
+}
+defer server.Stop()
+
+fmt.Println(server.URL()) // https://127.0.0.1:8081
+```
+
+## Key types
+
+| Type | Description |
+|---|---|
+| `Server` | The fake GCS server. Create with `NewServer` or `NewServerWithOptions`. |
+| `Options` | Configuration for `NewServerWithOptions` — initial objects, host, port, TLS certs, CORS, and more. |
+| `Object` | An object pre-loaded into the server at startup. Embeds `ObjectAttrs` plus `Content []byte`. |
+| `ObjectAttrs` | Metadata for an object: bucket name, object name, content type, checksums, ACL, timestamps, and so on. |
+| `CreateBucketOpts` | Options for `Server.CreateBucketWithOpts` — name, versioning, and default event-based hold. |
+
+## API reference
+
+Full Go API documentation is available on pkg.go.dev:
+
+<Card title="pkg.go.dev/github.com/fsouza/fake-gcs-server/fakestorage" icon="book-open" href="https://pkg.go.dev/github.com/fsouza/fake-gcs-server/fakestorage">
+  Browse the complete exported API — types, functions, and methods — with source links.
+</Card>

@@ -1,0 +1,161 @@
+---
+title: "Server flags"
+description: "Complete reference for all fake-gcs-server command-line flags."
+---
+
+Pass flags directly to the binary or append them after the Docker image name. Use `-help` to print all flags with their current defaults:
+
+```bash
+fake-gcs-server -help
+# or with Docker:
+docker run --rm fsouza/fake-gcs-server -help
+```
+
+## Server
+
+<ParamField path="-host" type="string" default="0.0.0.0">
+  The host address to bind to.
+</ParamField>
+
+<ParamField path="-port" type="uint" default="4443">
+  The port to bind to. Used for HTTPS (or HTTP when `-scheme http`). Maximum value is 65535.
+</ParamField>
+
+<ParamField path="-port-http" type="uint" default="8000">
+  The HTTP port to bind to. Only used when `-scheme both`. Maximum value is 65535.
+</ParamField>
+
+<ParamField path="-scheme" type="string" default="https">
+  The protocol the server listens on. Accepted values: `http`, `https`, `both`.
+
+  When set to `both`, HTTPS listens on `-port` and HTTP listens on `-port-http`.
+</ParamField>
+
+<ParamField path="-public-host" type="string" default="storage.googleapis.com">
+  The public host URL advertised by the server. Set this to the address of the emulator when working with signed URLs so that clients can replace `storage.googleapis.com` with a local address.
+</ParamField>
+
+<ParamField path="-external-url" type="string">
+  The external URL returned in the `Location` header for upload responses. Defaults to the address the server is bound to (e.g. `https://0.0.0.0:4443`).
+
+  When `-scheme both`, the default falls back to the HTTPS address.
+</ParamField>
+
+<ParamField path="-cors-headers" type="string">
+  Comma-separated list of additional headers to add to the CORS allowlist.
+
+  Example: `X-Custom-Header,X-Another-Header`
+</ParamField>
+
+<ParamField path="-log-level" type="string" default="info">
+  Logging verbosity. Accepted values: `debug`, `info`, `warning`, `warn`, `error`.
+</ParamField>
+
+## TLS
+
+<ParamField path="-cert-location" type="string">
+  Path to the TLS certificate file used by the HTTPS server. When omitted, a self-signed certificate is generated automatically.
+</ParamField>
+
+<ParamField path="-private-key-location" type="string">
+  Path to the private key file that corresponds to `-cert-location`.
+</ParamField>
+
+## Storage
+
+<ParamField path="-backend" type="string" default="filesystem">
+  The storage backend to use. Accepted values: `memory`, `filesystem`.
+
+  See [Storage backends](/configuration/storage-backends) for a full comparison.
+</ParamField>
+
+<ParamField path="-filesystem-root" type="string" default="/storage">
+  Root directory for the filesystem backend. The directory is created automatically if it does not exist. Required when `-backend filesystem`.
+</ParamField>
+
+<ParamField path="-data" type="string">
+  Path to a directory of seed data to load on startup. The directory must already exist. Subdirectory names become bucket names and files inside them become objects.
+
+  Example layout:
+
+  ```
+  /seed-data/
+  └── my-bucket/
+      └── hello.txt
+  ```
+</ParamField>
+
+<ParamField path="-location" type="string" default="US-CENTRAL1">
+  The location reported for newly created buckets.
+</ParamField>
+
+## Events
+
+Configure Pub/Sub notifications for storage events. Both `-event.pubsub-project-id` and `-event.pubsub-topic` must be set together.
+
+<ParamField path="-event.pubsub-project-id" type="string">
+  The Google Cloud project ID that contains the Pub/Sub topic.
+</ParamField>
+
+<ParamField path="-event.pubsub-topic" type="string">
+  The name of the Pub/Sub topic to publish events to.
+</ParamField>
+
+<ParamField path="-event.bucket" type="string">
+  Restrict event notifications to a single bucket. When empty, events from all buckets are published.
+</ParamField>
+
+<ParamField path="-event.object-prefix" type="string">
+  Restrict event notifications to objects whose name starts with this prefix. When empty, all objects trigger events.
+</ParamField>
+
+<ParamField path="-event.list" type="string" default="finalize">
+  Comma-separated list of event types to publish. Accepted values: `finalize`, `delete`, `metadataUpdate`, `archive`.
+
+  Example: `finalize,delete`
+</ParamField>
+
+## Complete example
+
+The following example starts the server with both HTTP and HTTPS, loads seed data, enables filesystem persistence, and publishes `finalize` and `delete` events to a Pub/Sub topic:
+
+```bash
+fake-gcs-server \
+  -scheme both \
+  -port 4443 \
+  -port-http 8000 \
+  -backend filesystem \
+  -filesystem-root /var/data/gcs \
+  -data /seed-data \
+  -location EU-WEST1 \
+  -event.pubsub-project-id my-project \
+  -event.pubsub-topic gcs-events \
+  -event.list finalize,delete \
+  -log-level debug
+```
+
+The equivalent Docker command:
+
+```bash
+docker run -d \
+  -p 4443:4443 \
+  -p 8000:8000 \
+  -v "$(pwd)/seed-data:/seed-data" \
+  -v "$(pwd)/gcs-data:/var/data/gcs" \
+  fsouza/fake-gcs-server \
+  -scheme both \
+  -port 4443 \
+  -port-http 8000 \
+  -backend filesystem \
+  -filesystem-root /var/data/gcs \
+  -data /seed-data \
+  -location EU-WEST1 \
+  -event.pubsub-project-id my-project \
+  -event.pubsub-topic gcs-events \
+  -event.list finalize,delete \
+  -log-level debug
+```
+
+<Note>
+  Every flag has a corresponding environment variable. See [Environment variables](/configuration/environment-variables) for the full mapping.
+</Note>

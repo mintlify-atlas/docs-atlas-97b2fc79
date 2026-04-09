@@ -1,0 +1,275 @@
+---
+title: "Objects and buckets"
+description: "Reference for the Object, ObjectAttrs, and CreateBucketOpts types used to pre-populate the fake GCS server."
+---
+
+## Object
+
+```go
+type Object struct {
+    ObjectAttrs
+    Content []byte
+}
+```
+
+`Object` is the buffered representation of a GCS object. It embeds `ObjectAttrs` for all metadata fields and adds `Content` for the raw bytes. Pass a slice of `Object` values to `NewServer` or `Options.InitialObjects` to pre-load the server.
+
+```go
+obj := fakestorage.Object{
+    ObjectAttrs: fakestorage.ObjectAttrs{
+        BucketName:  "my-bucket",
+        Name:        "path/to/file.txt",
+        ContentType: "text/plain",
+    },
+    Content: []byte("file content"),
+}
+```
+
+<Note>
+`Content` is not serialised to JSON. The server stores it in the backend when the object is loaded. After the server is running, read objects back through the standard `storage.Client` API.
+</Note>
+
+---
+
+## ObjectAttrs
+
+```go
+type ObjectAttrs struct {
+    BucketName         string
+    Name               string
+    Size               int64
+    StorageClass       string
+    ContentType        string
+    ContentEncoding    string
+    ContentDisposition string
+    ContentLanguage    string
+    CacheControl       string
+    Crc32c             string
+    Md5Hash            string
+    Etag               string
+    ACL                []storage.ACLRule
+    Created            time.Time
+    Updated            time.Time
+    Deleted            time.Time
+    CustomTime         time.Time
+    Generation         int64
+    Metadata           map[string]string
+    Retention          *storage.ObjectRetention
+}
+```
+
+`ObjectAttrs` holds the metadata for an object. All fields are optional except `BucketName` and `Name`.
+
+<ParamField path="BucketName" type="string" required>
+  The name of the bucket that contains this object.
+</ParamField>
+
+<ParamField path="Name" type="string" required>
+  The object's key within the bucket, for example `"images/logo.png"`.
+</ParamField>
+
+<ParamField path="Size" type="int64">
+  Object size in bytes. The server calculates this from `Content` when the object is loaded via `NewServer` or `InitialObjects`, so you can leave it as zero.
+</ParamField>
+
+<ParamField path="StorageClass" type="string">
+  GCS storage class, such as `"STANDARD"`, `"NEARLINE"`, `"COLDLINE"`, or `"ARCHIVE"`.
+</ParamField>
+
+<ParamField path="ContentType" type="string">
+  MIME type of the object, for example `"application/json"` or `"image/png"`.
+</ParamField>
+
+<ParamField path="ContentEncoding" type="string">
+  Content encoding, for example `"gzip"`. Corresponds to the `Content-Encoding` HTTP header.
+</ParamField>
+
+<ParamField path="ContentDisposition" type="string">
+  Content disposition, for example `"attachment; filename=\"file.txt\""`.
+</ParamField>
+
+<ParamField path="ContentLanguage" type="string">
+  BCP-47 language tag for the object content, for example `"en"`.
+</ParamField>
+
+<ParamField path="CacheControl" type="string">
+  Cache-Control directive, for example `"public, max-age=3600"`.
+</ParamField>
+
+<ParamField path="Crc32c" type="string">
+  Base64-encoded CRC32c checksum of the object content. The server calculates this automatically when objects are uploaded through the GCS API. Set it explicitly on `InitialObjects` to make assertions on checksum values.
+
+  ```go
+  import "github.com/fsouza/fake-gcs-server/internal/checksum"
+
+  Crc32c: checksum.EncodedCrc32cChecksum(content),
+  ```
+</ParamField>
+
+<ParamField path="Md5Hash" type="string">
+  Base64-encoded MD5 hash of the object content. Like `Crc32c`, the server sets this automatically on upload. Provide it on `InitialObjects` to test checksum validation.
+
+  ```go
+  Md5Hash: checksum.EncodedMd5Hash(content),
+  ```
+</ParamField>
+
+<ParamField path="Etag" type="string">
+  The entity tag for the object, used for conditional requests.
+</ParamField>
+
+<ParamField path="ACL" type="[]storage.ACLRule">
+  Access control list entries from `cloud.google.com/go/storage`. Each rule has an `Entity` and a `Role`.
+
+  ```go
+  ACL: []storage.ACLRule{
+      {
+          Entity: "projectOwner-test-project",
+          Role:   storage.RoleOwner,
+      },
+  },
+  ```
+</ParamField>
+
+<ParamField path="Created" type="time.Time">
+  Object creation timestamp. The server sets this to the current time when an object is created through the API. Inject a specific value in `InitialObjects` to make time-based assertions in tests.
+</ParamField>
+
+<ParamField path="Updated" type="time.Time">
+  Last modification timestamp.
+</ParamField>
+
+<ParamField path="Deleted" type="time.Time">
+  Deletion timestamp, set when an object is deleted in a versioned bucket.
+</ParamField>
+
+<ParamField path="CustomTime" type="time.Time">
+  User-defined timestamp. Corresponds to the `customTime` field in the GCS JSON API.
+</ParamField>
+
+<ParamField path="Generation" type="int64">
+  Object generation number. The server assigns this automatically. Set it on `InitialObjects` to test generation-based preconditions.
+</ParamField>
+
+<ParamField path="Metadata" type="map[string]string">
+  Custom object metadata as key-value pairs. Keys appear as `x-goog-meta-<key>` HTTP headers.
+
+  ```go
+  Metadata: map[string]string{
+      "uploader": "ci-pipeline",
+      "env":      "staging",
+  },
+  ```
+</ParamField>
+
+<ParamField path="Retention" type="*storage.ObjectRetention">
+  Object retention policy. Set `Mode` and `RetainUntil` to test retention enforcement.
+
+  ```go
+  Retention: &storage.ObjectRetention{
+      Mode:        "Locked",
+      RetainUntil: time.Now().Add(24 * time.Hour),
+  },
+  ```
+</ParamField>
+
+---
+
+## CreateBucketOpts
+
+```go
+type CreateBucketOpts struct {
+    Name                  string
+    VersioningEnabled     bool
+    DefaultEventBasedHold bool
+}
+```
+
+Pass `CreateBucketOpts` to `Server.CreateBucketWithOpts` to create a bucket with specific properties.
+
+<ParamField path="Name" type="string" required>
+  The bucket name. Must satisfy GCS naming rules: lowercase letters, digits, hyphens, underscores, and dots, at least two characters.
+</ParamField>
+
+<ParamField path="VersioningEnabled" type="boolean" default="false">
+  When `true`, the bucket retains noncurrent versions of objects when they are overwritten or deleted.
+</ParamField>
+
+<ParamField path="DefaultEventBasedHold" type="boolean" default="false">
+  When `true`, newly uploaded objects are held by default until the hold is explicitly released.
+</ParamField>
+
+---
+
+## Examples
+
+### Pre-loading objects with checksums and ACLs
+
+```go
+import (
+    "cloud.google.com/go/storage"
+    "github.com/fsouza/fake-gcs-server/fakestorage"
+    "github.com/fsouza/fake-gcs-server/internal/checksum"
+)
+
+content := []byte(`{"status":"ok"}`)
+
+server := fakestorage.NewServer([]fakestorage.Object{
+    {
+        ObjectAttrs: fakestorage.ObjectAttrs{
+            BucketName:  "api-responses",
+            Name:        "health.json",
+            ContentType: "application/json",
+            Crc32c:      checksum.EncodedCrc32cChecksum(content),
+            Md5Hash:     checksum.EncodedMd5Hash(content),
+            ACL: []storage.ACLRule{
+                {Entity: "allUsers", Role: storage.RoleReader},
+            },
+            Metadata: map[string]string{"version": "1"},
+        },
+        Content: content,
+    },
+})
+defer server.Stop()
+```
+
+### Creating a versioned bucket
+
+```go
+server := fakestorage.NewServer(nil)
+defer server.Stop()
+
+server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{
+    Name:              "versioned-assets",
+    VersioningEnabled: true,
+})
+```
+
+### Creating a bucket with default event-based hold
+
+```go
+server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{
+    Name:                  "regulated-data",
+    DefaultEventBasedHold: true,
+})
+```
+
+### Injecting timestamps for deterministic assertions
+
+```go
+created := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+
+server := fakestorage.NewServer([]fakestorage.Object{
+    {
+        ObjectAttrs: fakestorage.ObjectAttrs{
+            BucketName: "audit-logs",
+            Name:       "2024-01-15.log",
+            Created:    created,
+            Updated:    created,
+            Generation: 1705312800000000,
+        },
+        Content: []byte("log content"),
+    },
+})
+defer server.Stop()
+```

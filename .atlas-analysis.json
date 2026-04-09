@@ -1,0 +1,121 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "fake-gcs-server",
+  "projectDescription": "A Google Cloud Storage emulator that can be run as a standalone Docker container or used as a Go testing library.",
+  "theme": "aspen",
+  "primaryColor": "#ffffff",
+  "lightColor": "#74d7ed",
+  "darkColor": "#38484e",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart-docker",
+              "quickstart-go"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/server-flags",
+              "configuration/environment-variables",
+              "configuration/storage-backends"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/preloading-data",
+              "guides/signed-urls",
+              "guides/notifications",
+              "guides/tls-certificates"
+            ]
+          },
+          {
+            "group": "Client Examples",
+            "pages": [
+              "examples/go",
+              "examples/node",
+              "examples/python",
+              "examples/java",
+              "examples/other-languages"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Go Library",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "go-library/overview",
+              "go-library/quickstart"
+            ]
+          },
+          {
+            "group": "API Reference",
+            "pages": [
+              "go-library/server",
+              "go-library/options",
+              "go-library/objects-buckets"
+            ]
+          },
+          {
+            "group": "Internal Endpoints",
+            "pages": [
+              "go-library/internal-endpoints"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Full Google Cloud Storage JSON API emulation at /storage/v1/",
+    "XML API support for public object access",
+    "Docker image for language-agnostic integration testing",
+    "Go library (fakestorage package) for in-process GCS testing",
+    "Memory and filesystem storage backends",
+    "HTTP and HTTPS scheme support (or both simultaneously)",
+    "Resumable and multipart upload handling",
+    "Pub/Sub event notifications for object lifecycle events",
+    "Signed URL support",
+    "gRPC API support via HTTP/2 multiplexing",
+    "Data preloading via seed directory",
+    "CORS configuration support"
+  ],
+  "publicApiSurface": [
+    "NewServer(objects []Object) *Server",
+    "NewServerWithOptions(options Options) (*Server, error)",
+    "Server.Client() *storage.Client",
+    "Server.HTTPClient() *http.Client",
+    "Server.HTTPHandler() http.Handler",
+    "Server.URL() string",
+    "Server.PublicURL() string",
+    "Server.Stop()",
+    "Server.Backend() backend.Storage",
+    "Server.CreateBucketWithOpts(opts CreateBucketOpts)",
+    "type Object struct { ObjectAttrs; Content []byte }",
+    "type ObjectAttrs struct { BucketName, Name, ContentType, ... }",
+    "type Options struct { InitialObjects, StorageRoot, Scheme, Host, Port, ... }",
+    "type CreateBucketOpts struct { Name, VersioningEnabled, DefaultEventBasedHold }",
+    "GET /_internal/healthcheck",
+    "PUT /_internal/config",
+    "PUT|POST /_internal/reseed",
+    "POST /_internal/delete_all",
+    "CLI flag: -scheme (http|https|both)",
+    "CLI flag: -port (default 4443)",
+    "CLI flag: -backend (memory|filesystem)",
+    "CLI flag: -data (seed directory path)",
+    "CLI flag: -public-host",
+    "CLI flag: -external-url",
+    "CLI flag: -location",
+    "CLI flag: -cert-location / -private-key-location"
+  ]
+}

@@ -1,0 +1,183 @@
+---
+title: "Storage backends"
+description: "Choose between the memory and filesystem backends depending on your use case."
+---
+
+fake-gcs-server supports two storage backends. Select the one that fits your workflow with the `-backend` flag or the `FAKE_GCS_BACKEND` environment variable.
+
+## Backends at a glance
+
+<CardGroup cols={2}>
+  <Card title="Memory" icon="bolt">
+    Data lives only in RAM. Fast and zero-configuration, but all objects and buckets are lost when the server stops. Ideal for unit tests and CI pipelines where a clean slate on every run is desirable.
+  </Card>
+  <Card title="Filesystem" icon="hard-drive">
+    Data is written to a directory on disk and survives server restarts. Configurable via `-filesystem-root`. Ideal for local development where you want objects to persist between sessions.
+  </Card>
+</CardGroup>
+
+## Memory backend
+
+Start the server with the memory backend:
+
+<CodeGroup>
+
+```bash Binary
+fake-gcs-server -backend memory
+```
+
+```bash Docker
+docker run -d \
+  --name fake-gcs-server \
+  -p 4443:4443 \
+  -e FAKE_GCS_BACKEND=memory \
+  fsouza/fake-gcs-server
+```
+
+</CodeGroup>
+
+<Note>
+  Because the memory backend stores nothing on disk, you do not need to configure `-filesystem-root`. Any value set for that flag is ignored.
+</Note>
+
+When to use the memory backend:
+
+- Automated tests that must start from an empty state.
+- CI pipelines where containers are ephemeral.
+- Situations where test isolation matters more than data persistence.
+
+## Filesystem backend
+
+The filesystem backend is the default. It writes all bucket and object data under `-filesystem-root` (default: `/storage`). The directory is created automatically if it does not exist.
+
+<CodeGroup>
+
+```bash Binary
+fake-gcs-server \
+  -backend filesystem \
+  -filesystem-root /var/data/gcs
+```
+
+```bash Docker
+docker run -d \
+  --name fake-gcs-server \
+  -p 4443:4443 \
+  -v "$(pwd)/gcs-data:/storage" \
+  fsouza/fake-gcs-server
+```
+
+</CodeGroup>
+
+<Warning>
+  If you omit the `-v` volume mount in Docker, data is written inside the container and is lost when the container is removed.
+</Warning>
+
+The directory layout on disk mirrors the GCS hierarchy — top-level directories are bucket names and files inside them are objects:
+
+```
+/storage/
+├── my-bucket/
+│   ├── images/photo.jpg
+│   └── reports/2024.pdf
+└── another-bucket/
+    └── data.json
+```
+
+## Seeding initial data
+
+Both backends support loading initial data at startup via the `-data` flag (or `FAKE_GCS_DATA` environment variable). Point it at a directory with the same layout as above — subdirectory names become bucket names and files inside them become objects.
+
+<Steps>
+  <Step title="Create a seed directory">
+    Arrange your seed files under a local directory:
+
+    ```
+    ./seed-data/
+    └── sample-bucket/
+        └── some_file.txt
+    ```
+  </Step>
+  <Step title="Pass the directory to -data">
+    <CodeGroup>
+
+    ```bash Binary
+    fake-gcs-server -data ./seed-data
+    ```
+
+    ```bash Docker
+    docker run -d \
+      --name fake-gcs-server \
+      -p 4443:4443 \
+      -v "$(pwd)/seed-data:/data" \
+      fsouza/fake-gcs-server \
+      -data /data
+    ```
+
+    </CodeGroup>
+  </Step>
+  <Step title="Verify the seed data">
+    ```bash
+    curl --insecure https://0.0.0.0:4443/storage/v1/b/sample-bucket/o
+    ```
+
+    Expected response:
+
+    ```json
+    {
+      "kind": "storage#objects",
+      "items": [
+        {
+          "kind": "storage#object",
+          "name": "some_file.txt",
+          "id": "sample-bucket/some_file.txt",
+          "bucket": "sample-bucket",
+          "size": "33"
+        }
+      ],
+      "prefixes": []
+    }
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+  Seed data works with both backends. With the memory backend it gives you a consistent starting dataset without leaving anything on disk.
+</Tip>
+
+## Switching backends
+
+<Tabs>
+  <Tab title="CLI flag">
+    ```bash
+    # Memory
+    fake-gcs-server -backend memory
+
+    # Filesystem with a custom root
+    fake-gcs-server -backend filesystem -filesystem-root /var/data/gcs
+    ```
+  </Tab>
+  <Tab title="Environment variable">
+    ```bash
+    # Memory
+    FAKE_GCS_BACKEND=memory fake-gcs-server
+
+    # Filesystem
+    FAKE_GCS_BACKEND=filesystem FAKE_GCS_FILESYSTEM_ROOT=/var/data/gcs fake-gcs-server
+    ```
+  </Tab>
+  <Tab title="Docker -e flags">
+    ```bash
+    # Memory
+    docker run -d -p 4443:4443 \
+      -e FAKE_GCS_BACKEND=memory \
+      fsouza/fake-gcs-server
+
+    # Filesystem with volume mount
+    docker run -d -p 4443:4443 \
+      -e FAKE_GCS_BACKEND=filesystem \
+      -e FAKE_GCS_FILESYSTEM_ROOT=/storage \
+      -v "$(pwd)/gcs-data:/storage" \
+      fsouza/fake-gcs-server
+    ```
+  </Tab>
+</Tabs>

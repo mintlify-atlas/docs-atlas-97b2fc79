@@ -1,0 +1,225 @@
+---
+title: "Java client example"
+description: "Configure the Google Cloud Storage Java client with a custom host and NoCredentials to talk to fake-gcs-server."
+---
+
+The Java client library exposes `StorageOptions.newBuilder().setHost()` to redirect API calls to a custom endpoint. Pair it with `NoCredentials.getInstance()` to bypass authentication.
+
+## Start the server
+
+Run fake-gcs-server in HTTP mode on port 8080:
+
+```bash
+docker run -d \
+  --name fake-gcs-server \
+  -p 8080:8080 \
+  fsouza/fake-gcs-server \
+  -scheme http \
+  -port 8080 \
+  -external-url http://localhost:8080 \
+  -backend memory
+```
+
+## Add the dependency
+
+Add the Google Cloud Storage client to your `pom.xml` using the Google Cloud libraries BOM for version management:
+
+```xml pom.xml
+<dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>com.google.cloud</groupId>
+      <artifactId>libraries-bom</artifactId>
+      <version>24.2.0</version>
+      <type>pom</type>
+      <scope>import</scope>
+    </dependency>
+  </dependencies>
+</dependencyManagement>
+
+<dependencies>
+  <dependency>
+    <groupId>com.google.cloud</groupId>
+    <artifactId>google-cloud-storage</artifactId>
+  </dependency>
+</dependencies>
+```
+
+## Configure the client
+
+Pass the fake-gcs-server URL to `setHost()` and use `NoCredentials.getInstance()` to skip credential lookup:
+
+```java
+import com.google.cloud.NoCredentials;
+import com.google.cloud.storage.Storage;
+import com.google.cloud.storage.StorageOptions;
+
+Storage storageClient = StorageOptions.newBuilder()
+    .setHost("http://0.0.0.0:8080")
+    .setProjectId("test-project")
+    .setCredentials(NoCredentials.getInstance())
+    .build()
+    .getService();
+```
+
+## Complete example
+
+The following JUnit 5 test creates a bucket, writes two lines to an object via a `WriteChannel`, reads the object back, and asserts the content:
+
+```java FakeGcsServerTest.java
+package com.fsouza.fakegcsserver.java.examples;
+
+import com.google.cloud.NoCredentials;
+import com.google.cloud.WriteChannel;
+import com.google.cloud.storage.Blob;
+import com.google.cloud.storage.BlobInfo;
+import com.google.cloud.storage.BucketInfo;
+import com.google.cloud.storage.Storage;
+import com.google.cloud.storage.StorageOptions;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+class FakeGcsServerTest {
+
+    static Storage storageClient;
+
+    @BeforeAll
+    static void setUpStorageClient() throws Exception {
+        String fakeGcsExternalUrl = "http://0.0.0.0:8080";
+
+        storageClient = StorageOptions.newBuilder()
+            .setHost(fakeGcsExternalUrl)
+            .setProjectId("test-project")
+            .setCredentials(NoCredentials.getInstance())
+            .build()
+            .getService();
+    }
+
+    @Test
+    void shouldUploadFileByWriterChannel() throws IOException {
+
+        storageClient.create(BucketInfo.newBuilder("sample-bucket2").build());
+
+        WriteChannel channel = storageClient.writer(BlobInfo.newBuilder("sample-bucket2", "some_file2.txt").build());
+        channel.write(ByteBuffer.wrap("line1\n".getBytes()));
+        channel.write(ByteBuffer.wrap("line2\n".getBytes()));
+        channel.close();
+
+        Blob someFile2 = storageClient.get("sample-bucket2", "some_file2.txt");
+        String fileContent = new String(someFile2.getContent());
+        assertEquals("line1\nline2\n", fileContent);
+    }
+}
+```
+
+## How each operation works
+
+<AccordionGroup>
+  <Accordion title="Creating a bucket">
+    Pass a `BucketInfo` to `storageClient.create()`:
+
+    ```java
+    storageClient.create(BucketInfo.newBuilder("sample-bucket2").build());
+    ```
+  </Accordion>
+  <Accordion title="Uploading via WriteChannel (resumable upload)">
+    Open a `WriteChannel` from a `BlobInfo`, write byte buffers, then close the channel. The channel handles chunking automatically:
+
+    ```java
+    WriteChannel channel = storageClient.writer(
+        BlobInfo.newBuilder("sample-bucket2", "some_file2.txt").build()
+    );
+    channel.write(ByteBuffer.wrap("line1\n".getBytes()));
+    channel.write(ByteBuffer.wrap("line2\n".getBytes()));
+    channel.close();
+    ```
+  </Accordion>
+  <Accordion title="Downloading an object">
+    Retrieve the `Blob` by bucket and object name, then call `getContent()` to read all bytes:
+
+    ```java
+    Blob blob = storageClient.get("sample-bucket2", "some_file2.txt");
+    String content = new String(blob.getContent());
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Using Testcontainers
+
+When fake-gcs-server runs inside a Testcontainer the host and port are assigned dynamically. You must update the server's `externalUrl` before making resumable uploads so that redirect URLs resolve correctly:
+
+<Steps>
+  <Step title="Add Testcontainers dependencies">
+    ```xml pom.xml
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers</artifactId>
+      <version>${testcontainers.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>${testcontainers.version}</version>
+      <scope>test</scope>
+    </dependency>
+    ```
+  </Step>
+  <Step title="Start the container and update the external URL">
+    ```java
+    @Testcontainers
+    class FakeGcsServerTest {
+
+        @Container
+        static final GenericContainer<?> fakeGcs = new GenericContainer<>("fsouza/fake-gcs-server")
+          .withExposedPorts(4443)
+          .withCreateContainerCmdModifier(cmd -> cmd.withEntrypoint(
+              "/bin/fake-gcs-server",
+              "-scheme", "http"
+          ));
+
+        @BeforeAll
+        static void setUpFakeGcs() throws Exception {
+          String fakeGcsExternalUrl = "http://" + fakeGcs.getHost() + ":" + fakeGcs.getFirstMappedPort();
+
+          updateExternalUrlWithContainerUrl(fakeGcsExternalUrl);
+
+          storageClient = StorageOptions.newBuilder()
+              .setHost(fakeGcsExternalUrl)
+              .setProjectId("test-project")
+              .setCredentials(NoCredentials.getInstance())
+              .build()
+              .getService();
+        }
+
+        private static void updateExternalUrlWithContainerUrl(String fakeGcsExternalUrl) throws Exception {
+          String modifyExternalUrlRequestUri = fakeGcsExternalUrl + "/_internal/config";
+          String updateExternalUrlJson = "{"
+              + "\"externalUrl\": \"" + fakeGcsExternalUrl + "\""
+              + "}";
+
+          HttpRequest req = HttpRequest.newBuilder()
+              .uri(URI.create(modifyExternalUrlRequestUri))
+              .header("Content-Type", "application/json")
+              .PUT(BodyPublishers.ofString(updateExternalUrlJson))
+              .build();
+          HttpResponse<Void> response = HttpClient.newBuilder().build()
+              .send(req, BodyHandlers.discarding());
+
+          if (response.statusCode() != 200) {
+              throw new RuntimeException(
+                  "error updating fake-gcs-server with external url, response status code " + response.statusCode() + " != 200");
+          }
+        }
+    }
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+  The `/_internal/config` PUT call must happen before any resumable upload. Simple (non-resumable) uploads do not require it.
+</Tip>
